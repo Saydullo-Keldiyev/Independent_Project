@@ -1,0 +1,24 @@
+name: User Service CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "services/user-service/**"
+      - ".github/workflows/user-service.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "services/user-service/**"
+
+jobs:
+  pipeline:
+    uses: ./.github/workflows/reusable-go-service.yml
+    with:
+      service-name:     user-service
+      service-path:     services/user-service
+      dockerfile:       deployments/docker/user.Dockerfile
+      go-version:       "1.22"
+      coverage-threshold: "60"
+    secrets:
+      REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}

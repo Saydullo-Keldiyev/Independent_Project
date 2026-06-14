@@ -1,0 +1,69 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: auction-system
+spec:
+  schedule: "0 2 * * *"  # Daily at 02:00 UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 7
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 3600
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: postgres:16-alpine
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+                  BACKUP_FILE="/backups/auction_db_${TIMESTAMP}.sql.gz"
+
+                  echo "Starting backup at ${TIMESTAMP}..."
+                  pg_dump "$DB_URL" | gzip > "$BACKUP_FILE"
+
+                  # Keep only last 14 days of backups
+                  find /backups -name "*.sql.gz" -mtime +14 -delete
+
+                  SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
+                  echo "✅ Backup complete: ${BACKUP_FILE} (${SIZE})"
+              env:
+                - name: DB_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: auction-system-secrets
+                      key: DB_URL
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /backups
+              resources:
+                requests:
+                  cpu: "100m"
+                  memory: "256Mi"
+                limits:
+                  cpu: "500m"
+                  memory: "512Mi"
+          volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: postgres-backup-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-backup-pvc
+  namespace: auction-system
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+  storageClassName: standard

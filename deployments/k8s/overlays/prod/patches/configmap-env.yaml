@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: auction-system-config
+data:
+  APP_ENV: production
+  RATE_LIMIT_PER_MINUTE: "100"
+  PROXY_TIMEOUT_SEC: "30"
+  PROXY_RETRIES: "3"

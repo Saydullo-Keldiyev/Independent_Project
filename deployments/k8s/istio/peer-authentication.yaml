@@ -1,0 +1,12 @@
+# mTLS — encrypt ALL traffic between services inside the mesh.
+# STRICT mode: plain-text connections are rejected.
+# This means even if an attacker gets inside the cluster,
+# they cannot intercept service-to-service traffic.
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: default
+  namespace: auction-system
+spec:
+  mtls:
+    mode: STRICT   # enforce mTLS for all pods in this namespace

@@ -1,0 +1,98 @@
+# Canary deployment for bid-service
+# Traffic split: 90% → stable (v1), 10% → canary (v2)
+#
+# How it works:
+#   - stable deployment: 9 replicas (v1)
+#   - canary deployment: 1 replica  (v2)
+#   - Both share the same Service selector (app: bid-service)
+#   - k8s load balances proportionally by replica count
+#
+# To promote canary: update stable image to v2, delete canary
+# To rollback:       delete canary deployment
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bid-service-canary
+  namespace: auction-system
+  labels:
+    app: bid-service
+    track: canary
+    version: v2
+  annotations:
+    # Canary annotation for NGINX ingress canary (alternative approach)
+    nginx.ingress.kubernetes.io/canary: "true"
+    nginx.ingress.kubernetes.io/canary-weight: "10"
+spec:
+  replicas: 1   # 1 canary vs 9 stable = ~10% traffic
+
+  selector:
+    matchLabels:
+      app: bid-service
+      track: canary
+
+  template:
+    metadata:
+      labels:
+        app: bid-service
+        track: canary
+        version: v2
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: bid-service
+          image: auction/bid-service:v2   # new version
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8082
+          envFrom:
+            - configMapRef:
+                name: auction-system-config
+          env:
+            - name: APP_PORT
+              value: "8082"
+            - name: DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auction-system-secrets
+                  key: DB_URL
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auction-system-secrets
+                  key: JWT_SECRET
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: auction-system-secrets
+                  key: REDIS_PASSWORD
+          resources:
+            requests:
+              cpu:    "250m"
+              memory: "256Mi"
+            limits:
+              cpu:    "1000m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8082
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8082
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            failureThreshold: 3
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      serviceAccountName: auction-service-account

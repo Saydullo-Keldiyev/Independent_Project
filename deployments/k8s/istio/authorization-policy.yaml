@@ -1,0 +1,75 @@
+# AuthorizationPolicy — zero-trust network policy inside the mesh.
+# Only explicitly allowed service-to-service calls are permitted.
+
+# ── Default: deny all ─────────────────────────────────────────────────────────
+# Start with deny-all, then add explicit allow rules below.
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: deny-all
+  namespace: auction-system
+spec: {}   # empty spec = deny all
+---
+# ── Allow: ingress gateway → api-gateway ─────────────────────────────────────
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-ingress-to-gateway
+  namespace: auction-system
+spec:
+  selector:
+    matchLabels:
+      app: api-gateway
+  rules:
+    - from:
+        - source:
+            namespaces: ["istio-system"]   # ingress gateway namespace
+---
+# ── Allow: api-gateway → all services ────────────────────────────────────────
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-gateway-to-services
+  namespace: auction-system
+spec:
+  # Applies to all services EXCEPT api-gateway itself
+  rules:
+    - from:
+        - source:
+            principals:
+              - "cluster.local/ns/auction-system/sa/auction-service-account"
+      to:
+        - operation:
+            methods: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+---
+# ── Allow: bid-service → kafka (external, no Istio) ──────────────────────────
+# Kafka is outside the mesh — allow egress from bid-service
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-bid-service-egress
+  namespace: auction-system
+spec:
+  selector:
+    matchLabels:
+      app: bid-service
+  rules:
+    - to:
+        - operation:
+            ports: ["9092"]   # Kafka port
+---
+# ── Allow: Prometheus scraping ────────────────────────────────────────────────
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-prometheus-scrape
+  namespace: auction-system
+spec:
+  rules:
+    - from:
+        - source:
+            namespaces: ["monitoring"]
+      to:
+        - operation:
+            paths: ["/metrics"]
+            methods: ["GET"]

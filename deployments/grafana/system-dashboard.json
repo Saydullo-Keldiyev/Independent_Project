@@ -1,0 +1,82 @@
+{
+  "dashboard": {
+    "title": "Auction System Overview",
+    "uid": "system-overview",
+    "timezone": "browser",
+    "refresh": "30s",
+    "panels": [
+      {
+        "title": "HTTP Request Rate (All Services)",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+        "targets": [
+          { "expr": "sum(rate(http_requests_total[1m])) by (app)", "legendFormat": "{{app}}" }
+        ]
+      },
+      {
+        "title": "HTTP Error Rate",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+        "targets": [
+          { "expr": "sum(rate(http_requests_total{status=~\"5..\"}[1m])) by (app)", "legendFormat": "{{app}} 5xx" }
+        ]
+      },
+      {
+        "title": "Pod CPU Usage",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+        "targets": [
+          { "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"auction-system\"}[5m])) by (pod)", "legendFormat": "{{pod}}" }
+        ]
+      },
+      {
+        "title": "Pod Memory Usage",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+        "targets": [
+          { "expr": "sum(container_memory_working_set_bytes{namespace=\"auction-system\"}) by (pod) / 1024 / 1024", "legendFormat": "{{pod}} (MB)" }
+        ]
+      },
+      {
+        "title": "Kafka Consumer Lag",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+        "targets": [
+          { "expr": "kafka_consumer_group_lag", "legendFormat": "{{group}} - {{topic}}" }
+        ]
+      },
+      {
+        "title": "PostgreSQL Active Connections",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 12, "y": 16 },
+        "targets": [
+          { "expr": "pg_stat_activity_count{state=\"active\"}", "legendFormat": "active" }
+        ]
+      },
+      {
+        "title": "Redis Memory Usage",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 18, "y": 16 },
+        "targets": [
+          { "expr": "redis_memory_used_bytes / 1024 / 1024", "legendFormat": "MB" }
+        ]
+      },
+      {
+        "title": "Active WebSocket Connections (Total)",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 12, "y": 20 },
+        "targets": [
+          { "expr": "sum(bid_service_websocket_connections_active)", "legendFormat": "total" }
+        ]
+      },
+      {
+        "title": "Total Revenue Today",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 18, "y": 20 },
+        "targets": [
+          { "expr": "sum(auction_revenue_today_total)", "legendFormat": "$" }
+        ]
+      }
+    ]
+  }
+}

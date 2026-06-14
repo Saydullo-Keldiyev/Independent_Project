@@ -1,0 +1,25 @@
+# Staging overrides — mirrors production but smaller
+replicaCount: 2
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "500m"
+    memory: "256Mi"
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+
+podDisruptionBudget:
+  minAvailable: 1
+
+env:
+  APP_ENV: staging
+
+ingress:
+  enabled: true
+  host: api.staging.auction.com

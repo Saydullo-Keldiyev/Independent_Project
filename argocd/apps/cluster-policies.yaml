@@ -1,0 +1,26 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: auction-system-policies
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: policy
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: auction-system
+  source:
+    repoURL: https://github.com/Saydullo-Keldiyev/auction-system
+    targetRevision: HEAD
+    path: deployments/k8s/platform/kyverno
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kyverno
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - ApplyOutOfSyncOnly=true
+      - ServerSideApply=true

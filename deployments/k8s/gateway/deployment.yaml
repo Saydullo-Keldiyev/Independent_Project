@@ -1,0 +1,134 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: auction-system
+  labels:
+    app: api-gateway
+    version: v1
+  annotations:
+    # Prometheus scraping
+    prometheus.io/scrape: "true"
+    prometheus.io/port:   "8080"
+    prometheus.io/path:   "/metrics"
+spec:
+  replicas: 3
+
+  # Rolling update — zero downtime deploys
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1   # at most 1 pod down during update
+      maxSurge: 1         # at most 1 extra pod during update
+
+  selector:
+    matchLabels:
+      app: api-gateway
+
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port:   "8080"
+        prometheus.io/path:   "/metrics"
+    spec:
+      # Graceful shutdown — wait for in-flight requests
+      terminationGracePeriodSeconds: 30
+
+      # Spread pods across availability zones for HA
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: api-gateway
+
+      # Anti-affinity — don't put 2 pods on the same node
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: api-gateway
+                topologyKey: kubernetes.io/hostname
+
+      containers:
+        - name: api-gateway
+          image: ghcr.io/Saydullo-Keldiyev/api-gateway:sha-0000000
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+
+          # Environment from ConfigMap
+          envFrom:
+            - configMapRef:
+                name: auction-system-config
+
+          # Sensitive values from Secret
+          env:
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auction-system-secrets
+                  key: JWT_SECRET
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: auction-system-secrets
+                  key: REDIS_PASSWORD
+
+          # Resource limits — prevent noisy neighbor
+          resources:
+            requests:
+              cpu:    "100m"
+              memory: "128Mi"
+            limits:
+              cpu:    "500m"
+              memory: "256Mi"
+
+          # Readiness — only send traffic when ready
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+            successThreshold: 1
+
+          # Liveness — restart if deadlocked
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+
+          # Startup probe — give extra time on cold start
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            failureThreshold: 30
+            periodSeconds: 2
+
+          # Security context — run as non-root
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
+      # Service account (least privilege)
+      serviceAccountName: auction-service-account

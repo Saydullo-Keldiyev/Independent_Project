@@ -1,0 +1,24 @@
+name: Auction Service CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "services/auction-service/**"
+      - ".github/workflows/auction-service.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "services/auction-service/**"
+
+jobs:
+  pipeline:
+    uses: ./.github/workflows/reusable-go-service.yml
+    with:
+      service-name:     auction-service
+      service-path:     services/auction-service
+      dockerfile:       deployments/docker/auction.Dockerfile
+      go-version:       "1.22"
+      coverage-threshold: "60"
+    secrets:
+      REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}

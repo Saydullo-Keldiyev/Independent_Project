@@ -1,0 +1,35 @@
+# ArgoCD App-of-Apps pattern:
+# This single Application manages all child Applications.
+# One sync here deploys the entire auction-system.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: auction-system-root
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: auction-system
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: auction-system
+  source:
+    repoURL: https://github.com/Saydullo-Keldiyev/auction-system
+    targetRevision: HEAD
+    path: argocd/apps   # folder containing child Application manifests
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true       # delete resources removed from git
+      selfHeal: true    # revert manual kubectl changes
+    syncOptions:
+      - CreateNamespace=true
+      - PrunePropagationPolicy=foreground
+      - ApplyOutOfSyncOnly=true   # only sync changed resources
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m

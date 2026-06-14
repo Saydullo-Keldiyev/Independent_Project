@@ -1,0 +1,39 @@
+# Least-privilege ServiceAccount for all auction-system pods
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: auction-service-account
+  namespace: auction-system
+  labels:
+    app: auction-system
+automountServiceAccountToken: false  # don't auto-mount — services don't need k8s API
+---
+# Role — minimal permissions
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: auction-service-role
+  namespace: auction-system
+rules:
+  # Allow reading ConfigMaps (for dynamic config reload if needed)
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  # Allow reading own pod info (for health checks, pod name)
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: auction-service-rolebinding
+  namespace: auction-system
+subjects:
+  - kind: ServiceAccount
+    name: auction-service-account
+    namespace: auction-system
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: auction-service-role

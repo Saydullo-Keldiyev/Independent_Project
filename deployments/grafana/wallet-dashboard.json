@@ -1,0 +1,45 @@
+{
+  "dashboard": {
+    "title": "Wallet & Payments Dashboard",
+    "uid": "wallet-payments",
+    "timezone": "browser",
+    "refresh": "30s",
+    "panels": [
+      {
+        "title": "Wallet Operations/sec",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+        "targets": [
+          { "expr": "rate(wallet_operations_total[1m])", "legendFormat": "{{operation}}" }
+        ]
+      },
+      {
+        "title": "Hold/Release/Settle Balance",
+        "type": "timeseries",
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+        "targets": [
+          { "expr": "sum(rate(wallet_operations_total{operation=\"hold\"}[5m]))", "legendFormat": "holds" },
+          { "expr": "sum(rate(wallet_operations_total{operation=\"release\"}[5m]))", "legendFormat": "releases" },
+          { "expr": "sum(rate(wallet_operations_total{operation=\"settle\"}[5m]))", "legendFormat": "settles" },
+          { "expr": "sum(rate(wallet_operations_total{operation=\"credit\"}[5m]))", "legendFormat": "credits" }
+        ]
+      },
+      {
+        "title": "Settlement Success Rate",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 0, "y": 8 },
+        "targets": [
+          { "expr": "sum(rate(wallet_operations_total{operation=\"settle\"}[1h])) / (sum(rate(wallet_operations_total{operation=\"settle\"}[1h])) + sum(rate(wallet_errors_total{operation=\"settle\"}[1h])))", "legendFormat": "success %" }
+        ]
+      },
+      {
+        "title": "DLQ Messages",
+        "type": "stat",
+        "gridPos": { "h": 4, "w": 6, "x": 6, "y": 8 },
+        "targets": [
+          { "expr": "kafka_consumer_group_lag{topic=\"dead-letter-queue\"}", "legendFormat": "unprocessed" }
+        ]
+      }
+    ]
+  }
+}

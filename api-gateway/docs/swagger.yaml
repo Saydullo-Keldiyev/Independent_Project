@@ -1,0 +1,139 @@
+openapi: 3.0.3
+info:
+  title: Auction System API
+  version: 1.0.0
+  description: Production-grade auction platform — all endpoints
+servers:
+  - url: http://localhost:8080
+    description: Local (API Gateway)
+tags:
+  - name: Auth
+  - name: Sessions
+  - name: Users
+  - name: Auctions
+  - name: Auction Images
+  - name: Watchlist
+  - name: Bids
+  - name: Wallet
+  - name: Search
+  - name: Notifications
+  - name: Analytics
+  - name: Admin
+  - name: Health
+paths:
+  /api/v1/auth/register:
+    post: {tags: [Auth], summary: Register, requestBody: {required: true, content: {application/json: {schema: {type: object, required: [username,email,password,first_name,last_name], properties: {username: {type: string}, email: {type: string, format: email}, password: {type: string, minLength: 8}, first_name: {type: string}, last_name: {type: string}, role: {type: string, enum: [bidder,seller]}}}}}}, responses: {'201': {description: Registered}}}
+  /api/v1/auth/login:
+    post: {tags: [Auth], summary: Login, requestBody: {required: true, content: {application/json: {schema: {type: object, required: [email,password], properties: {email: {type: string}, password: {type: string}}}}}}, responses: {'200': {description: Token pair}}}
+  /api/v1/auth/refresh:
+    post: {tags: [Auth], summary: Refresh token, requestBody: {content: {application/json: {schema: {type: object, properties: {refresh_token: {type: string}}}}}}, responses: {'200': {description: New tokens}}}
+  /api/v1/auth/logout:
+    post: {tags: [Auth], summary: Logout, security: [{BearerAuth: []}], responses: {'200': {description: Logged out}}}
+  /api/v1/auth/forgot-password:
+    post: {tags: [Auth], summary: Forgot password, requestBody: {content: {application/json: {schema: {type: object, properties: {email: {type: string, format: email}}}}}}, responses: {'200': {description: Reset email sent}}}
+  /api/v1/auth/reset-password:
+    post: {tags: [Auth], summary: Reset password, requestBody: {content: {application/json: {schema: {type: object, properties: {token: {type: string}, new_password: {type: string}}}}}}, responses: {'200': {description: Password reset}}}
+  /api/v1/auth/verify-email:
+    post: {tags: [Auth], summary: Verify email, requestBody: {content: {application/json: {schema: {type: object, properties: {token: {type: string}}}}}}, responses: {'200': {description: Verified}}}
+  /api/v1/auth/change-password:
+    post: {tags: [Auth], summary: Change password, security: [{BearerAuth: []}], requestBody: {content: {application/json: {schema: {type: object, properties: {old_password: {type: string}, new_password: {type: string}}}}}}, responses: {'200': {description: Changed}}}
+  /api/v1/sessions:
+    get: {tags: [Sessions], summary: List active sessions, security: [{BearerAuth: []}], responses: {'200': {description: Sessions}}}
+    delete: {tags: [Sessions], summary: Revoke all sessions, security: [{BearerAuth: []}], responses: {'200': {description: All revoked}}}
+  /api/v1/sessions/{id}:
+    delete: {tags: [Sessions], summary: Revoke session, security: [{BearerAuth: []}], parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Revoked}}}
+  /api/v1/users/me:
+    get: {tags: [Users], summary: Get my profile, security: [{BearerAuth: []}], responses: {'200': {description: Profile}}}
+    put: {tags: [Users], summary: Update profile, security: [{BearerAuth: []}], responses: {'200': {description: Updated}}}
+    delete: {tags: [Users], summary: Delete account, security: [{BearerAuth: []}], responses: {'200': {description: Deleted}}}
+  /api/v1/users/avatar:
+    post: {tags: [Users], summary: Upload avatar, security: [{BearerAuth: []}], responses: {'200': {description: Uploaded}}}
+    delete: {tags: [Users], summary: Delete avatar, security: [{BearerAuth: []}], responses: {'200': {description: Deleted}}}
+  /api/v1/users/{id}:
+    get: {tags: [Users], summary: Public profile, parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Public profile}}}
+  /api/v1/auctions:
+    get: {tags: [Auctions], summary: List auctions, parameters: [{name: state, in: query, schema: {type: string, enum: [active,scheduled,ended]}}, {name: page, in: query, schema: {type: integer}}, {name: page_size, in: query, schema: {type: integer}}], responses: {'200': {description: List}}}
+    post: {tags: [Auctions], summary: Create auction (seller), security: [{BearerAuth: []}], requestBody: {required: true, content: {application/json: {schema: {type: object, required: [title,description,starting_price,start_time,end_time], properties: {title: {type: string}, description: {type: string}, starting_price: {type: number}, reserve_price: {type: number}, start_time: {type: string, format: date-time}, end_time: {type: string, format: date-time}}}}}}, responses: {'201': {description: Created}}}
+  /api/v1/auctions/{id}:
+    get: {tags: [Auctions], summary: Get auction, parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Auction}}}
+    put: {tags: [Auctions], summary: Update auction, security: [{BearerAuth: []}], parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Updated}}}
+    delete: {tags: [Auctions], summary: Delete auction, security: [{BearerAuth: []}], parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Deleted}}}
+  /api/v1/auctions/{id}/publish:
+    post: {tags: [Auctions], summary: Publish auction, security: [{BearerAuth: []}], parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Published}}}
+  /api/v1/auctions/{id}/cancel:
+    post: {tags: [Auctions], summary: Cancel auction, security: [{BearerAuth: []}], parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Cancelled}}}
+  /api/v1/auctions/{id}/images:
+    post: {tags: [Auction Images], summary: Add image, security: [{BearerAuth: []}], parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {'201': {description: Added}}}
+  /api/v1/auctions/{id}/images/{imageId}:
+    delete: {tags: [Auction Images], summary: Delete image, security: [{BearerAuth: []}], parameters: [{name: id, in: path, required: true, schema: {type: string}}, {name: imageId, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Deleted}}}
+  /api/v1/seller/auctions:
+    get: {tags: [Auctions], summary: My auctions (seller), security: [{BearerAuth: []}], responses: {'200': {description: Seller auctions}}}
+  /api/v1/categories:
+    get: {tags: [Auctions], summary: List categories, responses: {'200': {description: Categories}}}
+  /api/v1/watchlist:
+    get: {tags: [Watchlist], summary: My watchlist, security: [{BearerAuth: []}], responses: {'200': {description: Watchlist}}}
+  /api/v1/watchlist/{auctionId}:
+    post: {tags: [Watchlist], summary: Add to watchlist, security: [{BearerAuth: []}], parameters: [{name: auctionId, in: path, required: true, schema: {type: string}}], responses: {'201': {description: Added}}}
+    delete: {tags: [Watchlist], summary: Remove from watchlist, security: [{BearerAuth: []}], parameters: [{name: auctionId, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Removed}}}
+  /api/v1/bids:
+    post: {tags: [Bids], summary: Place bid, security: [{BearerAuth: []}], requestBody: {required: true, content: {application/json: {schema: {type: object, required: [auction_id,amount], properties: {auction_id: {type: string}, amount: {type: number}}}}}}, responses: {'201': {description: Bid placed}, '400': {description: Bid too low}, '429': {description: Auction busy}}}
+  /api/v1/bids/me:
+    get: {tags: [Bids], summary: My bids, security: [{BearerAuth: []}], responses: {'200': {description: Bid history}}}
+  /api/v1/auctions/{id}/bids:
+    get: {tags: [Bids], summary: Auction bids, parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Bids}}}
+  /api/v1/auctions/{id}/bid-history:
+    get: {tags: [Bids], summary: Full bid timeline, parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Timeline}}}
+  /api/v1/auctions/{id}/min-bid:
+    get: {tags: [Bids], summary: Minimum valid bid amount, parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Min bid info}}}
+  /api/v1/ws/{auction_id}:
+    get: {tags: [Bids], summary: WebSocket real-time bids, security: [{BearerAuth: []}], parameters: [{name: auction_id, in: path, required: true, schema: {type: string}}], responses: {'101': {description: WebSocket upgrade}}}
+  /api/v1/wallet:
+    get: {tags: [Wallet], summary: Get balance, security: [{BearerAuth: []}], responses: {'200': {description: Wallet}}}
+  /api/v1/wallet/deposit:
+    post: {tags: [Wallet], summary: Deposit, security: [{BearerAuth: []}], requestBody: {content: {application/json: {schema: {type: object, properties: {amount: {type: number}}}}}}, responses: {'200': {description: Deposited}}}
+  /api/v1/wallet/withdraw:
+    post: {tags: [Wallet], summary: Withdraw, security: [{BearerAuth: []}], requestBody: {content: {application/json: {schema: {type: object, properties: {amount: {type: number}}}}}}, responses: {'200': {description: Withdrawn}}}
+  /api/v1/wallet/history:
+    get: {tags: [Wallet], summary: Transaction history, security: [{BearerAuth: []}], responses: {'200': {description: Transactions}}}
+  /api/v1/payments/hold:
+    post: {tags: [Wallet], summary: Hold balance for bid, security: [{BearerAuth: []}], requestBody: {content: {application/json: {schema: {type: object, properties: {auction_id: {type: string}, amount: {type: number}}}}}}, responses: {'200': {description: Held}}}
+  /api/v1/search:
+    get: {tags: [Search], summary: Search auctions, parameters: [{name: q, in: query, schema: {type: string}}, {name: category, in: query, schema: {type: string}}, {name: min_price, in: query, schema: {type: number}}, {name: max_price, in: query, schema: {type: number}}, {name: sort_by, in: query, schema: {type: string, enum: [price_asc,price_desc,newest,ending_soon,most_bids]}}], responses: {'200': {description: Results}}}
+  /api/v1/search/suggest:
+    get: {tags: [Search], summary: Autocomplete, parameters: [{name: q, in: query, required: true, schema: {type: string}}], responses: {'200': {description: Suggestions}}}
+  /api/v1/search/trending:
+    get: {tags: [Search], summary: Trending searches, responses: {'200': {description: Trending}}}
+  /api/v1/notifications:
+    get: {tags: [Notifications], summary: My notifications, security: [{BearerAuth: []}], responses: {'200': {description: Notifications}}}
+  /api/v1/notifications/{id}/read:
+    post: {tags: [Notifications], summary: Mark as read, security: [{BearerAuth: []}], parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Read}}}
+  /api/v1/notifications/read-all:
+    post: {tags: [Notifications], summary: Mark all read, security: [{BearerAuth: []}], responses: {'200': {description: All read}}}
+  /api/v1/analytics/admin/dashboard:
+    get: {tags: [Analytics], summary: Admin KPIs, security: [{BearerAuth: []}], responses: {'200': {description: Dashboard}}}
+  /api/v1/analytics/revenue:
+    get: {tags: [Analytics], summary: Revenue metrics, security: [{BearerAuth: []}], parameters: [{name: from, in: query, schema: {type: string, format: date}}, {name: to, in: query, schema: {type: string, format: date}}], responses: {'200': {description: Revenue}}}
+  /api/v1/analytics/seller/{id}:
+    get: {tags: [Analytics], summary: Seller analytics, parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Seller stats}}}
+  /api/v1/analytics/trending:
+    get: {tags: [Analytics], summary: Leaderboards, responses: {'200': {description: Trending}}}
+  /api/v1/admin/users:
+    get: {tags: [Admin], summary: List all users, security: [{BearerAuth: []}], responses: {'200': {description: Users}}}
+  /api/v1/admin/users/{id}/ban:
+    put: {tags: [Admin], summary: Ban user, security: [{BearerAuth: []}], parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Banned}}}
+  /api/v1/admin/auctions:
+    get: {tags: [Admin], summary: All auctions (admin), security: [{BearerAuth: []}], responses: {'200': {description: Auctions}}}
+  /api/v1/admin/auctions/{id}:
+    delete: {tags: [Admin], summary: Force delete auction, security: [{BearerAuth: []}], parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Deleted}}}
+  /health:
+    get: {tags: [Health], summary: Liveness, responses: {'200': {description: OK}}}
+  /ready:
+    get: {tags: [Health], summary: Readiness, responses: {'200': {description: Ready}, '503': {description: Not ready}}}
+  /metrics:
+    get: {tags: [Health], summary: Prometheus metrics, responses: {'200': {description: Metrics}}}
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

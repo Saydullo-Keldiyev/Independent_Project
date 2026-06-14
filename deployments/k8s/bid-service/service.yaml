@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: bid-service
+  namespace: auction-system
+  labels:
+    app: bid-service
+  annotations:
+    # WebSocket sticky sessions via NGINX ingress
+    # Ensures a client's WS connection always hits the same pod
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "bid-service-affinity"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "172800"
+    nginx.ingress.kubernetes.io/session-cookie-max-age: "172800"
+spec:
+  type: ClusterIP
+  selector:
+    app: bid-service
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8082
+      protocol: TCP

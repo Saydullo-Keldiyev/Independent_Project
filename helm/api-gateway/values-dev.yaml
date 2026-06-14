@@ -1,0 +1,11 @@
+replicaCount: 1
+autoscaling:
+  enabled: false
+podDisruptionBudget:
+  enabled: false
+podAntiAffinity:
+  required: false
+topologySpread:
+  enabled: false
+env:
+  APP_ENV: development

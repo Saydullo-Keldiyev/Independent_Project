@@ -1,0 +1,120 @@
+{{- range $name, $svc := dict "gateway" .Values.gateway "user-service" .Values.userService "bid-service" .Values.bidService "auction-service" .Values.auctionService "notification-service" .Values.notificationService }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Values.global.namespace }}
+  labels:
+    app: {{ $name }}
+spec:
+  replicas: {{ $svc.replicas }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: {{ $name }}
+  template:
+    metadata:
+      labels:
+        app: {{ $name }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ $svc.port }}"
+        prometheus.io/path: "/metrics"
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: {{ $name }}
+          image: "{{ $.Values.global.imageRegistry }}/{{ $svc.image }}:latest"
+          imagePullPolicy: {{ $.Values.global.imagePullPolicy }}
+          ports:
+            - containerPort: {{ $svc.port }}
+          envFrom:
+            - configMapRef:
+                name: auction-system-config
+          env:
+            - name: APP_PORT
+              value: "{{ $svc.port }}"
+            - name: DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auction-system-secrets
+                  key: DB_URL
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auction-system-secrets
+                  key: JWT_SECRET
+          resources:
+            requests:
+              cpu: {{ $svc.resources.requests.cpu }}
+              memory: {{ $svc.resources.requests.memory }}
+            limits:
+              cpu: {{ $svc.resources.limits.cpu }}
+              memory: {{ $svc.resources.limits.memory }}
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: {{ $svc.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ $svc.port }}
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  type: ClusterIP
+  selector:
+    app: {{ $name }}
+  ports:
+    - port: 80
+      targetPort: {{ $svc.port }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $name }}-hpa
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ $name }}
+  minReplicas: {{ $svc.hpa.minReplicas }}
+  maxReplicas: {{ $svc.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $svc.hpa.targetCPU }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}-pdb
+  namespace: {{ $.Values.global.namespace }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: {{ $name }}
+{{- end }}

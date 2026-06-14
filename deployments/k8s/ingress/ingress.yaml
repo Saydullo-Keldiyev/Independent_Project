@@ -1,0 +1,67 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: auction-ingress
+  namespace: auction-system
+  annotations:
+    # NGINX ingress controller
+    kubernetes.io/ingress.class: nginx
+
+    # TLS redirect
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+
+    # Rate limiting at ingress level (first line of defense)
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/limit-connections: "20"
+
+    # Request size limit
+    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+
+    # Timeouts
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "10"
+    nginx.ingress.kubernetes.io/proxy-read-timeout:    "60"
+    nginx.ingress.kubernetes.io/proxy-send-timeout:    "60"
+
+    # WebSocket support — required for /ws/* routes
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+
+    # CORS handled by api-gateway — disable at ingress
+    nginx.ingress.kubernetes.io/enable-cors: "false"
+
+    # Security headers
+    nginx.ingress.kubernetes.io/server-snippet: |
+      add_header X-Frame-Options "DENY" always;
+      add_header X-Content-Type-Options "nosniff" always;
+      add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # Sticky sessions for WebSocket (bid-service)
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "auction-affinity"
+    nginx.ingress.kubernetes.io/session-cookie-secure: "true"
+    nginx.ingress.kubernetes.io/session-cookie-samesite: "Strict"
+
+spec:
+  ingressClassName: nginx
+
+  # TLS termination
+  tls:
+    - hosts:
+        - api.auction.com
+      secretName: auction-tls-cert   # created by cert-manager
+
+  rules:
+    - host: api.auction.com
+      http:
+        paths:
+          # All traffic → api-gateway
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api-gateway
+                port:
+                  number: 80

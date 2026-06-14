@@ -1,0 +1,195 @@
+# Blue/Green Deployment for bid-service
+#
+# FLOW:
+#   1. Blue (v1) is live — all traffic goes here
+#   2. Deploy Green (v2) — no traffic yet
+#   3. Test Green internally
+#   4. Switch Service selector: blue → green (instant, zero downtime)
+#   5. Monitor Green for 10 minutes
+#   6. If OK: delete Blue
+#   7. If BAD: switch selector back to Blue (instant rollback)
+#
+# Switch command:
+#   kubectl patch service bid-service -n auction-system \
+#     -p '{"spec":{"selector":{"slot":"green"}}}'
+#
+# Rollback command:
+#   kubectl patch service bid-service -n auction-system \
+#     -p '{"spec":{"selector":{"slot":"blue"}}}'
+
+# ── Blue Deployment (current live) ───────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bid-service-blue
+  namespace: auction-system
+  labels:
+    app: bid-service
+    slot: blue
+    version: v1
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: bid-service
+      slot: blue
+  template:
+    metadata:
+      labels:
+        app: bid-service
+        slot: blue
+        version: v1
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: bid-service
+          image: ghcr.io/Saydullo-Keldiyev/bid-service:v1
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8082
+          envFrom:
+            - configMapRef:
+                name: auction-system-config
+          env:
+            - name: APP_PORT
+              value: "8082"
+            - name: DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auction-system-secrets
+                  key: DB_URL
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auction-system-secrets
+                  key: JWT_SECRET
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: auction-system-secrets
+                  key: REDIS_PASSWORD
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8082
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8082
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      serviceAccountName: auction-service-account
+---
+# ── Green Deployment (new version — no traffic initially) ────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bid-service-green
+  namespace: auction-system
+  labels:
+    app: bid-service
+    slot: green
+    version: v2
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: bid-service
+      slot: green
+  template:
+    metadata:
+      labels:
+        app: bid-service
+        slot: green
+        version: v2
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: bid-service
+          image: ghcr.io/Saydullo-Keldiyev/bid-service:v2   # new version
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8082
+          envFrom:
+            - configMapRef:
+                name: auction-system-config
+          env:
+            - name: APP_PORT
+              value: "8082"
+            - name: DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auction-system-secrets
+                  key: DB_URL
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auction-system-secrets
+                  key: JWT_SECRET
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: auction-system-secrets
+                  key: REDIS_PASSWORD
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "512Mi"
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8082
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8082
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      serviceAccountName: auction-service-account
+---
+# ── Service — points to BLUE by default ──────────────────────────────────────
+# Switch to green: kubectl patch ... -p '{"spec":{"selector":{"slot":"green"}}}'
+apiVersion: v1
+kind: Service
+metadata:
+  name: bid-service-bg
+  namespace: auction-system
+  labels:
+    app: bid-service
+spec:
+  type: ClusterIP
+  selector:
+    app: bid-service
+    slot: blue          # ← change to "green" to switch traffic
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8082

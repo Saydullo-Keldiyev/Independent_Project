@@ -1,0 +1,217 @@
+# Zookeeper StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: zookeeper
+  namespace: auction-system
+  labels:
+    app: zookeeper
+spec:
+  serviceName: zookeeper-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zookeeper
+  template:
+    metadata:
+      labels:
+        app: zookeeper
+    spec:
+      containers:
+        - name: zookeeper
+          image: confluentinc/cp-zookeeper:7.5.0
+          ports:
+            - containerPort: 2181
+          env:
+            - name: ZOOKEEPER_CLIENT_PORT
+              value: "2181"
+            - name: ZOOKEEPER_TICK_TIME
+              value: "2000"
+          resources:
+            requests:
+              cpu:    "100m"
+              memory: "256Mi"
+            limits:
+              cpu:    "500m"
+              memory: "512Mi"
+          volumeMounts:
+            - name: zookeeper-data
+              mountPath: /var/lib/zookeeper
+  volumeClaimTemplates:
+    - metadata:
+        name: zookeeper-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: fast-ssd
+        resources:
+          requests:
+            storage: 5Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper-headless
+  namespace: auction-system
+spec:
+  clusterIP: None
+  selector:
+    app: zookeeper
+  ports:
+    - port: 2181
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper
+  namespace: auction-system
+spec:
+  type: ClusterIP
+  selector:
+    app: zookeeper
+  ports:
+    - port: 2181
+---
+# Kafka 3-broker StatefulSet for fault tolerance
+# If 1 broker fails, cluster continues with 2 remaining
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: auction-system
+  labels:
+    app: kafka
+spec:
+  serviceName: kafka-headless
+  replicas: 3   # 3 brokers — can lose 1 and still have quorum
+
+  selector:
+    matchLabels:
+      app: kafka
+
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      # Spread brokers across nodes — never 2 on same node
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: kafka
+              topologyKey: kubernetes.io/hostname
+
+      containers:
+        - name: kafka
+          image: confluentinc/cp-kafka:7.5.0
+          ports:
+            - name: kafka
+              containerPort: 9092
+            - name: kafka-internal
+              containerPort: 9093
+          env:
+            - name: KAFKA_BROKER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name   # kafka-0, kafka-1, kafka-2
+            - name: KAFKA_ZOOKEEPER_CONNECT
+              value: "zookeeper.auction-system.svc.cluster.local:2181"
+            - name: KAFKA_ADVERTISED_LISTENERS
+              value: "PLAINTEXT://$(POD_NAME).kafka-headless.auction-system.svc.cluster.local:9092"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: KAFKA_LISTENERS
+              value: "PLAINTEXT://0.0.0.0:9092"
+            - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+              value: "3"
+            - name: KAFKA_DEFAULT_REPLICATION_FACTOR
+              value: "3"
+            - name: KAFKA_MIN_INSYNC_REPLICAS
+              value: "2"   # require 2 replicas to ack writes
+            - name: KAFKA_LOG_RETENTION_HOURS
+              value: "168"  # 7 days
+            - name: KAFKA_LOG_SEGMENT_BYTES
+              value: "1073741824"
+            - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+              value: "true"
+          resources:
+            requests:
+              cpu:    "250m"
+              memory: "512Mi"
+            limits:
+              cpu:    "1000m"
+              memory: "2Gi"
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - "kafka-broker-api-versions --bootstrap-server localhost:9092"
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 5
+          livenessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - "kafka-broker-api-versions --bootstrap-server localhost:9092"
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 3
+          volumeMounts:
+            - name: kafka-data
+              mountPath: /var/lib/kafka/data
+
+  volumeClaimTemplates:
+    - metadata:
+        name: kafka-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: fast-ssd
+        resources:
+          requests:
+            storage: 50Gi
+---
+# Headless service for broker-to-broker communication
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-headless
+  namespace: auction-system
+spec:
+  clusterIP: None
+  selector:
+    app: kafka
+  ports:
+    - name: kafka
+      port: 9092
+---
+# ClusterIP for application access (bootstrap)
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: auction-system
+spec:
+  type: ClusterIP
+  selector:
+    app: kafka
+  ports:
+    - name: kafka
+      port: 9092
+      targetPort: 9092
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: kafka-pdb
+  namespace: auction-system
+spec:
+  minAvailable: 2   # always keep 2 of 3 brokers running
+  selector:
+    matchLabels:
+      app: kafka

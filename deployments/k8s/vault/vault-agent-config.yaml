@@ -1,0 +1,47 @@
+# Vault Agent Injector — injects secrets as files/env vars into pods
+# Requires: HashiCorp Vault + vault-agent-injector installed in cluster
+#
+# Install Vault:
+#   helm repo add hashicorp https://helm.releases.hashicorp.com
+#   helm install vault hashicorp/vault --namespace vault --create-namespace
+
+# ── Vault Policy for bid-service ─────────────────────────────────────────────
+# Apply in Vault:
+#   vault policy write bid-service - <<EOF
+#   path "secret/data/auction-system/*" {
+#     capabilities = ["read"]
+#   }
+#   EOF
+#
+#   vault write auth/kubernetes/role/bid-service \
+#     bound_service_account_names=auction-service-account \
+#     bound_service_account_namespaces=auction-system \
+#     policies=bid-service \
+#     ttl=1h
+
+---
+# Patch bid-service deployment to use Vault Agent sidecar injection
+# Add these annotations to the pod template in deployment.yaml:
+#
+# annotations:
+#   vault.hashicorp.com/agent-inject: "true"
+#   vault.hashicorp.com/role: "bid-service"
+#   vault.hashicorp.com/agent-inject-secret-config: "secret/data/auction-system/bid-service"
+#   vault.hashicorp.com/agent-inject-template-config: |
+#     {{- with secret "secret/data/auction-system/bid-service" -}}
+#     export DB_URL="{{ .Data.data.db_url }}"
+#     export JWT_SECRET="{{ .Data.data.jwt_secret }}"
+#     export REDIS_PASSWORD="{{ .Data.data.redis_password }}"
+#     {{- end }}
+
+# ── Vault Secret Store (External Secrets Operator alternative) ────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-agent-config
+  namespace: auction-system
+data:
+  # Vault address — update for your cluster
+  VAULT_ADDR: "http://vault.vault.svc.cluster.local:8200"
+  VAULT_ROLE: "bid-service"
+  VAULT_PATH: "secret/data/auction-system/bid-service"

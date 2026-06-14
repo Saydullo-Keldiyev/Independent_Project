@@ -1,0 +1,830 @@
+openapi: 3.0.3
+info:
+  title: Auction System API
+  description: |
+    Production-grade auction platform with microservices architecture.
+    
+    ## Authentication
+    All protected endpoints require a Bearer JWT token in the Authorization header:
+    ```
+    Authorization: Bearer <access_token>
+    ```
+    
+    ## Services
+    - **User Service** — Registration, login, profile, wallet
+    - **Auction Service** — CRUD auctions, scheduling, state machine
+    - **Bid Service** — Place bids, real-time WebSocket updates
+    - **Payment Service** — Wallet, holds, settlements
+    - **Notification Service** — Real-time notifications via WebSocket
+    - **Search Service** — Full-text search, autocomplete, trending
+    - **Analytics Service** — Dashboards, revenue, metrics
+  version: 1.0.0
+  contact:
+    name: Platform Team
+    email: platform@auction.com
+
+servers:
+  - url: http://localhost:8080
+    description: Local Development (API Gateway)
+  - url: https://api.auction.com
+    description: Production
+
+tags:
+  - name: Auth
+    description: Authentication & Authorization
+  - name: Users
+    description: User profile management
+  - name: Auctions
+    description: Auction lifecycle management
+  - name: Bids
+    description: Bid placement & history
+  - name: Wallet
+    description: Wallet & payments
+  - name: Search
+    description: Search & discovery
+  - name: Analytics
+    description: Business intelligence
+  - name: Notifications
+    description: Real-time notifications
+  - name: Health
+    description: Service health checks
+
+paths:
+  # ══════════════════════════════════════════════════════════════════════════════
+  # AUTH
+  # ══════════════════════════════════════════════════════════════════════════════
+  /api/v1/auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Validation error
+        '409':
+          description: Email already exists
+
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: Login with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Invalid credentials
+
+  /api/v1/auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Refresh access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        '200':
+          description: New token pair
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout (revoke token)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Logged out
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # USERS
+  # ══════════════════════════════════════════════════════════════════════════════
+  /api/v1/users/me:
+    get:
+      tags: [Users]
+      summary: Get current user profile
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+    put:
+      tags: [Users]
+      summary: Update profile
+      security:
+        - BearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                first_name:
+                  type: string
+                last_name:
+                  type: string
+      responses:
+        '200':
+          description: Profile updated
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # AUCTIONS
+  # ══════════════════════════════════════════════════════════════════════════════
+  /api/v1/auctions:
+    get:
+      tags: [Auctions]
+      summary: List auctions (public)
+      parameters:
+        - name: state
+          in: query
+          schema:
+            type: string
+            enum: [active, scheduled, ended]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Auction list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuctionListResponse'
+    post:
+      tags: [Auctions]
+      summary: Create auction (seller/admin only)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAuctionRequest'
+      responses:
+        '201':
+          description: Auction created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuctionResponse'
+        '403':
+          description: Only sellers can create auctions
+
+  /api/v1/auctions/{id}:
+    get:
+      tags: [Auctions]
+      summary: Get auction by ID (public)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Auction details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuctionResponse'
+        '404':
+          description: Auction not found
+    put:
+      tags: [Auctions]
+      summary: Update auction (owner only, draft/scheduled state)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAuctionRequest'
+      responses:
+        '200':
+          description: Updated
+        '403':
+          description: Not the owner
+        '409':
+          description: Cannot modify active auction
+    delete:
+      tags: [Auctions]
+      summary: Delete auction (owner/admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Deleted
+
+  /api/v1/seller/auctions:
+    get:
+      tags: [Auctions]
+      summary: Get my auctions (seller)
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Seller's auctions
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # BIDS
+  # ══════════════════════════════════════════════════════════════════════════════
+  /api/v1/bids:
+    post:
+      tags: [Bids]
+      summary: Place a bid
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateBidRequest'
+      responses:
+        '201':
+          description: Bid placed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BidResponse'
+        '400':
+          description: Bid too low / auction not active
+        '429':
+          description: Auction busy (lock contention)
+
+  /api/v1/bids/me:
+    get:
+      tags: [Bids]
+      summary: Get my bids
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: User's bid history
+
+  /api/v1/auctions/{auction_id}/bids:
+    get:
+      tags: [Bids]
+      summary: Get bids for an auction (public)
+      parameters:
+        - name: auction_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Bid list
+
+  /api/v1/ws/{auction_id}:
+    get:
+      tags: [Bids]
+      summary: WebSocket — real-time bid updates
+      description: |
+        Upgrade to WebSocket connection. Receives JSON messages when new bids are placed.
+        ```json
+        {"type":"new_bid","auction_id":"...","amount":1500,"user_id":"...","timestamp":"..."}
+        ```
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: auction_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '101':
+          description: WebSocket upgrade
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # WALLET & PAYMENTS
+  # ══════════════════════════════════════════════════════════════════════════════
+  /api/v1/wallet:
+    get:
+      tags: [Wallet]
+      summary: Get wallet balance
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Wallet info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletResponse'
+
+  /api/v1/wallet/deposit:
+    post:
+      tags: [Wallet]
+      summary: Deposit funds
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          schema:
+            type: string
+          description: Unique key to prevent duplicate deposits
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount]
+              properties:
+                amount:
+                  type: number
+                  minimum: 0.01
+                  example: 500.00
+      responses:
+        '200':
+          description: Deposit successful
+
+  /api/v1/wallet/history:
+    get:
+      tags: [Wallet]
+      summary: Transaction history
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Transaction list
+
+  /api/v1/payments/hold:
+    post:
+      tags: [Wallet]
+      summary: Hold balance for bid (internal)
+      security:
+        - BearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [auction_id, amount]
+              properties:
+                auction_id:
+                  type: string
+                amount:
+                  type: number
+      responses:
+        '200':
+          description: Balance held
+        '400':
+          description: Insufficient balance
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # SEARCH
+  # ══════════════════════════════════════════════════════════════════════════════
+  /api/v1/search:
+    get:
+      tags: [Search]
+      summary: Search auctions (full-text, fuzzy)
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Search query (supports typos)
+          example: iphone
+        - name: category
+          in: query
+          schema:
+            type: string
+        - name: min_price
+          in: query
+          schema:
+            type: number
+        - name: max_price
+          in: query
+          schema:
+            type: number
+        - name: sort_by
+          in: query
+          schema:
+            type: string
+            enum: [price_asc, price_desc, newest, ending_soon, most_bids]
+        - name: page
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Search results
+
+  /api/v1/search/suggest:
+    get:
+      tags: [Search]
+      summary: Autocomplete suggestions
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 2
+      responses:
+        '200':
+          description: Suggestions list
+
+  /api/v1/search/trending:
+    get:
+      tags: [Search]
+      summary: Trending searches
+      responses:
+        '200':
+          description: Top trending queries
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # NOTIFICATIONS
+  # ══════════════════════════════════════════════════════════════════════════════
+  /api/v1/notifications:
+    get:
+      tags: [Notifications]
+      summary: Get notification history
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Notification list with unread count
+
+  /api/v1/notifications/{id}/read:
+    post:
+      tags: [Notifications]
+      summary: Mark notification as read
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Marked as read
+
+  /api/v1/notifications/read-all:
+    post:
+      tags: [Notifications]
+      summary: Mark all as read
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: All marked as read
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # ANALYTICS
+  # ══════════════════════════════════════════════════════════════════════════════
+  /api/v1/analytics/admin/dashboard:
+    get:
+      tags: [Analytics]
+      summary: Admin dashboard KPIs
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Platform-wide metrics
+
+  /api/v1/analytics/revenue:
+    get:
+      tags: [Analytics]
+      summary: Revenue metrics (date range)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Daily revenue metrics
+
+  /api/v1/analytics/trending:
+    get:
+      tags: [Analytics]
+      summary: Leaderboards (top sellers, bidders, categories)
+      responses:
+        '200':
+          description: Trending data
+
+  # ══════════════════════════════════════════════════════════════════════════════
+  # HEALTH
+  # ══════════════════════════════════════════════════════════════════════════════
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      responses:
+        '200':
+          description: Service is alive
+
+  /ready:
+    get:
+      tags: [Health]
+      summary: Readiness probe (checks DB, Redis)
+      responses:
+        '200':
+          description: Service is ready
+        '503':
+          description: Dependencies unhealthy
+
+  /metrics:
+    get:
+      tags: [Health]
+      summary: Prometheus metrics
+      responses:
+        '200':
+          description: Prometheus text format
+
+# ══════════════════════════════════════════════════════════════════════════════════
+# COMPONENTS
+# ══════════════════════════════════════════════════════════════════════════════════
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    RegisterRequest:
+      type: object
+      required: [username, email, password, first_name, last_name]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          example: john_doe
+        email:
+          type: string
+          format: email
+          example: john@example.com
+        password:
+          type: string
+          minLength: 8
+          example: SecurePass123!
+        first_name:
+          type: string
+          example: John
+        last_name:
+          type: string
+          example: Doe
+        role:
+          type: string
+          enum: [bidder, seller]
+          default: bidder
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    AuthResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            access_token:
+              type: string
+            refresh_token:
+              type: string
+            expires_in:
+              type: integer
+              description: Seconds until access token expires
+            token_type:
+              type: string
+              example: Bearer
+            user:
+              $ref: '#/components/schemas/UserResponse'
+
+    UserResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        email:
+          type: string
+        first_name:
+          type: string
+        last_name:
+          type: string
+        role:
+          type: string
+
+    CreateAuctionRequest:
+      type: object
+      required: [title, description, starting_price, start_time, end_time]
+      properties:
+        title:
+          type: string
+          minLength: 3
+          example: iPhone 16 Pro Max
+        description:
+          type: string
+          minLength: 10
+          example: Brand new, sealed box, 256GB
+        category_id:
+          type: string
+          format: uuid
+        starting_price:
+          type: number
+          minimum: 0.01
+          example: 1000.00
+        reserve_price:
+          type: number
+          example: 1500.00
+        start_time:
+          type: string
+          format: date-time
+          example: "2026-06-01T12:00:00Z"
+        end_time:
+          type: string
+          format: date-time
+          example: "2026-06-02T12:00:00Z"
+
+    UpdateAuctionRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        reserve_price:
+          type: number
+
+    AuctionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        seller_id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        starting_price:
+          type: number
+        current_price:
+          type: number
+        state:
+          type: string
+          enum: [draft, scheduled, active, ending, ended, archived]
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        winner_id:
+          type: string
+          nullable: true
+        total_bids:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    AuctionListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            auctions:
+              type: array
+              items:
+                $ref: '#/components/schemas/AuctionResponse'
+            total:
+              type: integer
+            page:
+              type: integer
+            page_size:
+              type: integer
+
+    CreateBidRequest:
+      type: object
+      required: [auction_id, amount]
+      properties:
+        auction_id:
+          type: string
+          format: uuid
+        amount:
+          type: number
+          minimum: 0.01
+          example: 1500.00
+
+    BidResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        auction_id:
+          type: string
+        user_id:
+          type: string
+        amount:
+          type: number
+        created_at:
+          type: string
+          format: date-time
+
+    WalletResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        available_balance:
+          type: number
+          example: 3500.00
+        held_balance:
+          type: number
+          example: 1500.00
+        total_balance:
+          type: number
+          example: 5000.00
+        currency:
+          type: string
+          example: USD

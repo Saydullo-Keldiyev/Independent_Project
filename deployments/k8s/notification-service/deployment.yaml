@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-service
+  namespace: auction-system
+  labels:
+    app: notification-service
+    version: v1
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: notification-service
+  template:
+    metadata:
+      labels:
+        app: notification-service
+        version: v1
+    spec:
+      terminationGracePeriodSeconds: 30
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: notification-service
+                topologyKey: kubernetes.io/hostname
+      containers:
+        - name: notification-service
+          image: ghcr.io/Saydullo-Keldiyev/notification-service:sha-0000000
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8084
+          envFrom:
+            - configMapRef:
+                name: auction-system-config
+          env:
+            - name: APP_PORT
+              value: "8084"
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: auction-system-secrets
+                  key: REDIS_PASSWORD
+          resources:
+            requests:
+              cpu:    "100m"
+              memory: "128Mi"
+            limits:
+              cpu:    "300m"
+              memory: "256Mi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8084
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8084
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      serviceAccountName: auction-service-account
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notification-service
+  namespace: auction-system
+spec:
+  type: ClusterIP
+  selector:
+    app: notification-service
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8084
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: notification-service-pdb
+  namespace: auction-system
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: notification-service

@@ -1,0 +1,116 @@
+{
+  "title": "Bid Service — Golden Signals",
+  "uid": "bid-service-golden",
+  "schemaVersion": 38,
+  "refresh": "10s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Bid Requests / sec",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 0, "w": 8, "h": 8 },
+      "targets": [
+        {
+          "expr": "rate(bid_service_bid_requests_total[1m])",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Bid Latency P99 (seconds)",
+      "type": "timeseries",
+      "gridPos": { "x": 8, "y": 0, "w": 8, "h": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, rate(bid_service_bid_latency_seconds_bucket[5m]))",
+          "legendFormat": "p99"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(bid_service_bid_latency_seconds_bucket[5m]))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.50, rate(bid_service_bid_latency_seconds_bucket[5m]))",
+          "legendFormat": "p50"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Active WebSocket Connections",
+      "type": "stat",
+      "gridPos": { "x": 16, "y": 0, "w": 8, "h": 8 },
+      "targets": [
+        {
+          "expr": "bid_service_websocket_connections_active",
+          "legendFormat": "connections"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "HTTP Error Rate",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 8, "w": 8, "h": 8 },
+      "targets": [
+        {
+          "expr": "rate(bid_service_http_requests_total{status=~\"5..\"}[1m])",
+          "legendFormat": "5xx errors/s"
+        },
+        {
+          "expr": "rate(bid_service_http_requests_total{status=~\"4..\"}[1m])",
+          "legendFormat": "4xx errors/s"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Redis Latency P99",
+      "type": "timeseries",
+      "gridPos": { "x": 8, "y": 8, "w": 8, "h": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, rate(bid_service_redis_operation_duration_seconds_bucket[5m]))",
+          "legendFormat": "{{operation}} p99"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Kafka Publish Rate",
+      "type": "timeseries",
+      "gridPos": { "x": 16, "y": 8, "w": 8, "h": 8 },
+      "targets": [
+        {
+          "expr": "rate(bid_service_kafka_publish_total[1m])",
+          "legendFormat": "{{topic}} {{status}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "DB Query Latency P99",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, rate(bid_service_db_query_duration_seconds_bucket[5m]))",
+          "legendFormat": "{{query}} p99"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Distributed Lock — Acquire Rate",
+      "type": "timeseries",
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 },
+      "targets": [
+        {
+          "expr": "rate(bid_service_lock_acquire_total[1m])",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    }
+  ]
+}

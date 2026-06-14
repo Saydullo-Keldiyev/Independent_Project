@@ -1,0 +1,9 @@
+apiVersion: v2
+name: api-gateway
+description: Auction System — API Gateway Helm Chart
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+maintainers:
+  - name: Platform Team
+    email: platform@auction.com

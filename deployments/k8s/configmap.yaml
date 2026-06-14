@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: auction-system-config
+  namespace: auction-system
+data:
+  APP_ENV: "production"
+
+  # Service ports
+  API_GATEWAY_PORT: "8080"
+  USER_SERVICE_PORT: "8081"
+  BID_SERVICE_PORT:  "8082"
+  AUCTION_SERVICE_PORT: "8083"
+  NOTIFICATION_SERVICE_PORT: "8084"
+
+  # Internal service URLs (ClusterIP DNS)
+  USER_SERVICE_URL:         "http://user-service.auction-system.svc.cluster.local"
+  AUCTION_SERVICE_URL:      "http://auction-service.auction-system.svc.cluster.local"
+  BID_SERVICE_URL:          "http://bid-service.auction-system.svc.cluster.local"
+  NOTIFICATION_SERVICE_URL: "http://notification-service.auction-system.svc.cluster.local"
+
+  # Redis
+  REDIS_ADDR: "redis-master.auction-system.svc.cluster.local:6379"
+  REDIS_DB:   "0"
+
+  # Kafka
+  KAFKA_BROKERS: "kafka-0.kafka-headless.auction-system.svc.cluster.local:9092,kafka-1.kafka-headless.auction-system.svc.cluster.local:9092,kafka-2.kafka-headless.auction-system.svc.cluster.local:9092"
+  KAFKA_TOPIC:   "bid-events"
+  KAFKA_GROUP_ID: "bid-service"
+
+  # Tracing
+  OTEL_EXPORTER_OTLP_ENDPOINT: "jaeger-collector.monitoring.svc.cluster.local:4318"
+
+  # API Gateway
+  RATE_LIMIT_PER_MINUTE: "100"
+  PROXY_TIMEOUT_SEC: "30"
+  PROXY_RETRIES: "2"
+
+  # Lock TTL
+  LOCK_TTL_SECONDS: "5"

@@ -1,0 +1,136 @@
+name: Security Scan (Full Repo)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Run every day at 02:00 UTC — catch new CVEs even without code changes
+    - cron: "0 2 * * *"
+
+jobs:
+  # ── Secret Detection ────────────────────────────────────────────────────────
+  secret-scan:
+    name: Secret Detection (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history for gitleaks
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── Dependency Audit ────────────────────────────────────────────────────────
+  dependency-audit:
+    name: Dependency Vulnerability Audit
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service:
+          - api-gateway
+          - services/bid-service
+          - services/user-service
+          - services/auction-service
+          - services/notification-service
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+
+      - name: govulncheck — ${{ matrix.service }}
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./${{ matrix.service }}/...
+        continue-on-error: true
+
+  # ── IaC Security Scan ───────────────────────────────────────────────────────
+  iac-scan:
+    name: IaC Security Scan (Trivy)
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Scan Kubernetes manifests for misconfigurations
+      - name: Trivy — K8s manifest scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: config
+          scan-ref: deployments/k8s
+          format: sarif
+          output: trivy-iac.sarif
+          severity: CRITICAL,HIGH,MEDIUM
+        continue-on-error: true
+
+      - name: Upload IaC scan results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-iac.sarif
+        continue-on-error: true
+
+      # Scan Dockerfiles
+      - name: Trivy — Dockerfile scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: config
+          scan-ref: deployments/docker
+          format: table
+          severity: CRITICAL,HIGH
+        continue-on-error: true
+
+  # ── OPA Policy Check ────────────────────────────────────────────────────────
+  policy-check:
+    name: OPA Policy Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OPA
+        run: |
+          curl -L -o opa https://openpolicyagent.org/downloads/v0.65.0/opa_linux_amd64_static
+          chmod +x opa
+          sudo mv opa /usr/local/bin/
+
+      - name: Validate K8s manifests against policies
+        run: |
+          set -euo pipefail
+          for f in $(find deployments/k8s -name "deployment.yaml"); do
+            echo "Checking: $f"
+            opa eval \
+              --data .github/policies/k8s.rego \
+              --input "$f" \
+              "data.kubernetes.deny" \
+              --fail-defined
+          done
+
+  # ── SBOM Generation ─────────────────────────────────────────────────────────
+  sbom:
+    name: Generate SBOM
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate SBOM with Syft (filesystem)
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          artifact-name: sbom-full-repo.spdx.json
+          output-file: sbom-full-repo.spdx.json
+          format: spdx-json
+
+      - name: Upload SBOM as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom-full-repo.spdx.json
+          retention-days: 90

@@ -1,0 +1,105 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: auction-system
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: "Auction System — Production GitOps Project"
+
+  # Source repos allowed
+  sourceRepos:
+    - "https://github.com/Saydullo-Keldiyev/auction-system"
+
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: auction-system
+    - server: https://kubernetes.default.svc
+      namespace: auction-system-staging
+    - server: https://kubernetes.default.svc
+      namespace: auction-system-dev
+    - server: https://kubernetes.default.svc
+      namespace: monitoring
+    - server: https://kubernetes.default.svc
+      namespace: kyverno
+
+  # Allowed resource types
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+
+  namespaceResourceWhitelist:
+    - group: "apps"
+      kind: Deployment
+    - group: "apps"
+      kind: StatefulSet
+    - group: ""
+      kind: Service
+    - group: ""
+      kind: ConfigMap
+    - group: ""
+      kind: ServiceAccount
+    - group: "autoscaling"
+      kind: HorizontalPodAutoscaler
+    - group: "policy"
+      kind: PodDisruptionBudget
+    - group: "networking.k8s.io"
+      kind: Ingress
+    - group: "rbac.authorization.k8s.io"
+      kind: Role
+    - group: "rbac.authorization.k8s.io"
+      kind: RoleBinding
+    - group: "kyverno.io"
+      kind: ClusterPolicy
+    - group: "networking.istio.io"
+      kind: VirtualService
+    - group: "networking.istio.io"
+      kind: DestinationRule
+    - group: "networking.istio.io"
+      kind: Gateway
+    - group: "security.istio.io"
+      kind: PeerAuthentication
+    - group: "security.istio.io"
+      kind: AuthorizationPolicy
+    - group: "bitnami.com"
+      kind: SealedSecret
+
+  # Deny plain Secrets via GitOps (use Sealed Secrets or Vault)
+  namespaceResourceBlacklist:
+    - group: ""
+      kind: Secret
+
+  # Sync windows — only allow deploys Mon-Fri 08:00-22:00 UTC
+  syncWindows:
+    - kind: allow
+      schedule: "0 8 * * 1-5"
+      duration: 14h
+      applications: ["*"]
+      manualSync: true
+    # Always allow manual sync for hotfixes
+    - kind: allow
+      schedule: "* * * * *"
+      duration: 1m
+      applications: ["*"]
+      manualSync: true
+
+  roles:
+    - name: developer
+      description: "Read-only access for developers"
+      policies:
+        - p, proj:auction-system:developer, applications, get, auction-system/*, allow
+        - p, proj:auction-system:developer, applications, sync, auction-system/*, allow
+      groups:
+        - auction-system-developers
+
+    - name: admin
+      description: "Full access for platform team"
+      policies:
+        - p, proj:auction-system:admin, applications, *, auction-system/*, allow
+      groups:
+        - auction-system-admins

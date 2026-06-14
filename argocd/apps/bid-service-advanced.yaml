@@ -1,0 +1,20 @@
+# Manual-only: blue/green & canary — never auto-sync with rolling-update deployment
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: bid-service-advanced
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: auction-system
+spec:
+  project: auction-system
+  source:
+    repoURL: https://github.com/Saydullo-Keldiyev/auction-system
+    targetRevision: HEAD
+    path: deployments/k8s/advanced/bid-service
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: auction-system
+  syncPolicy:
+    # No automated sync — operator triggers manually
+    automated: null

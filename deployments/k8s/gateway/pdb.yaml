@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: api-gateway-pdb
+  namespace: auction-system
+spec:
+  # At least 2 pods must be available during voluntary disruptions
+  # (node drain, cluster upgrade, etc.)
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: api-gateway

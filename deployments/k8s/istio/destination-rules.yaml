@@ -1,0 +1,114 @@
+# DestinationRule — connection pool, circuit breaker, load balancing, subsets.
+
+# ── Bid Service — circuit breaker + canary subsets ────────────────────────────
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: bid-service
+  namespace: auction-system
+spec:
+  host: bid-service
+  trafficPolicy:
+    # Connection pool — prevent cascading failures
+    connectionPool:
+      tcp:
+        maxConnections: 100
+        connectTimeout: 5s
+      http:
+        http1MaxPendingRequests: 100
+        http2MaxRequests: 1000
+        maxRequestsPerConnection: 10
+
+    # Circuit breaker — open circuit when service is unhealthy
+    outlierDetection:
+      consecutive5xxErrors: 5        # open after 5 consecutive 5xx
+      interval: 30s                  # check every 30s
+      baseEjectionTime: 30s          # eject for 30s minimum
+      maxEjectionPercent: 50         # never eject more than 50% of pods
+      minHealthPercent: 30           # keep at least 30% healthy
+
+    # Load balancing — LEAST_CONN for WebSocket (sticky-ish)
+    loadBalancer:
+      simple: LEAST_CONN
+
+  # Subsets for canary deployment
+  subsets:
+    - name: stable
+      labels:
+        version: v1
+    - name: canary
+      labels:
+        version: v2
+      trafficPolicy:
+        connectionPool:
+          http:
+            http1MaxPendingRequests: 10   # limit canary traffic
+---
+# ── API Gateway ───────────────────────────────────────────────────────────────
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: api-gateway
+  namespace: auction-system
+spec:
+  host: api-gateway
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 200
+      http:
+        http1MaxPendingRequests: 200
+        http2MaxRequests: 2000
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 30
+    loadBalancer:
+      simple: ROUND_ROBIN
+---
+# ── User Service ──────────────────────────────────────────────────────────────
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: user-service
+  namespace: auction-system
+spec:
+  host: user-service
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 50
+      http:
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 500
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+    loadBalancer:
+      simple: ROUND_ROBIN
+---
+# ── Auction Service ───────────────────────────────────────────────────────────
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: auction-service
+  namespace: auction-system
+spec:
+  host: auction-service
+  trafficPolicy:
+    connectionPool:
+      tcp:
+        maxConnections: 50
+      http:
+        http1MaxPendingRequests: 50
+        http2MaxRequests: 500
+    outlierDetection:
+      consecutive5xxErrors: 5
+      interval: 30s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+    loadBalancer:
+      simple: ROUND_ROBIN

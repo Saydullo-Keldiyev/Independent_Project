@@ -1,0 +1,42 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: auction-system-prod
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    environment: production
+  annotations:
+    notifications.argoproj.io/subscribe.on-sync-succeeded.slack: auction-deploys
+    notifications.argoproj.io/subscribe.on-sync-failed.slack: auction-alerts
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: auction-system
+  source:
+    repoURL: https://github.com/Saydullo-Keldiyev/auction-system
+    targetRevision: main
+    path: deployments/k8s/overlays/prod
+    kustomize:
+      buildOptions: --load-restrictor LoadRestrictionsNone
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: auction-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ApplyOutOfSyncOnly=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 3m
+  ignoreDifferences:
+    - group: autoscaling
+      kind: HorizontalPodAutoscaler
+      jsonPointers:
+        - /status/currentReplicas

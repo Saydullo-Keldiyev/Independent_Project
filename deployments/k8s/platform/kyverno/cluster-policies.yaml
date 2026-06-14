@@ -1,0 +1,108 @@
+# Requires Kyverno installed in cluster:
+#   helm install kyverno kyverno/kyverno -n kyverno --create-namespace
+#
+# Policies start in Audit mode — switch validationFailureAction to Enforce in production.
+
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-privileged-containers
+  annotations:
+    policies.kyverno.io/title: Disallow Privileged Containers
+    policies.kyverno.io/category: Pod Security
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: privileged-containers
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [auction-system, auction-system-staging, auction-system-dev]
+      validate:
+        message: Privileged containers are not allowed.
+        pattern:
+          spec:
+            containers:
+              - name: "*"
+                securityContext:
+                  privileged: false
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-latest-image-tag
+  annotations:
+    policies.kyverno.io/title: Disallow Latest Tag
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-sha-tag
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [auction-system, auction-system-staging, auction-system-dev]
+      validate:
+        message: "Use immutable tags (sha-*) — ':latest' is forbidden."
+        pattern:
+          spec:
+            containers:
+              - name: "*"
+                image: "!*:latest"
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-resource-limits
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: check-limits
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [auction-system, auction-system-staging, auction-system-dev]
+      validate:
+        message: CPU and memory limits are required.
+        pattern:
+          spec:
+            containers:
+              - name: "*"
+                resources:
+                  limits:
+                    memory: "?*"
+                    cpu: "?*"
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: verify-signed-images
+  annotations:
+    policies.kyverno.io/title: Verify Cosign Signatures (GHCR)
+spec:
+  # Start with Audit — enable Enforce after Cosign signing is stable in CI
+  validationFailureAction: Audit
+  webhookTimeoutSeconds: 30
+  failurePolicy: Fail
+  rules:
+    - name: verify-ghcr-signatures
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: [auction-system, auction-system-staging]
+      verifyImages:
+        - imageReferences:
+            - "ghcr.io/*"
+          attestors:
+            - entries:
+                - keyless:
+                    subject: "https://github.com/*/.github/workflows/*"
+                    issuer: "https://token.actions.githubusercontent.com"
+                    rekor:
+                      url: https://rekor.sigstore.dev

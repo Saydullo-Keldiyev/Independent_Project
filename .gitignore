@@ -1,0 +1,65 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+dist/
+
+# Go build artifacts
+*.test
+*.out
+coverage.out
+coverage.html
+
+# Go workspace
+go.work
+go.work.sum
+
+# Environment files — NEVER commit real secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Kubernetes secrets — use Sealed Secrets instead
+deployments/k8s/secrets.yaml
+**/secret.yaml
+**/secrets-plain.yaml
+
+# Helm
+helm/*/charts/
+helm/*/*.lock
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+!*.tfvars.example
+
+# Docker
+.dockerignore
+
+# Logs
+*.log
+logs/
+
+# Test artifacts
+/tmp/
+*.prof
+
+# Vendor (we use go modules)
+vendor/
+
+# OS
+.DS_Store

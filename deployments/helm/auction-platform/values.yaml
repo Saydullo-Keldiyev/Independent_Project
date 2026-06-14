@@ -1,0 +1,109 @@
+# Global settings
+global:
+  imageRegistry: ghcr.io/saydullo-keldiyev
+  imagePullPolicy: Always
+  environment: production
+  namespace: auction-system
+
+# Services
+gateway:
+  replicas: 2
+  image: api-gateway
+  port: 8080
+  resources:
+    requests: { cpu: "100m", memory: "128Mi" }
+    limits: { cpu: "500m", memory: "256Mi" }
+  hpa:
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPU: 70
+
+userService:
+  replicas: 2
+  image: user-service
+  port: 8081
+  resources:
+    requests: { cpu: "100m", memory: "128Mi" }
+    limits: { cpu: "500m", memory: "256Mi" }
+  hpa:
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPU: 70
+
+bidService:
+  replicas: 3
+  image: bid-service
+  port: 8082
+  resources:
+    requests: { cpu: "250m", memory: "256Mi" }
+    limits: { cpu: "1000m", memory: "512Mi" }
+  hpa:
+    minReplicas: 3
+    maxReplicas: 20
+    targetCPU: 70
+
+auctionService:
+  replicas: 2
+  image: auction-service
+  port: 8083
+  resources:
+    requests: { cpu: "100m", memory: "128Mi" }
+    limits: { cpu: "500m", memory: "256Mi" }
+  hpa:
+    minReplicas: 2
+    maxReplicas: 8
+    targetCPU: 70
+
+notificationService:
+  replicas: 2
+  image: notification-service
+  port: 8084
+  resources:
+    requests: { cpu: "100m", memory: "128Mi" }
+    limits: { cpu: "300m", memory: "256Mi" }
+  hpa:
+    minReplicas: 2
+    maxReplicas: 6
+    targetCPU: 70
+
+# Infrastructure
+redis:
+  enabled: true
+  auth:
+    enabled: true
+    existingSecret: auction-system-secrets
+    existingSecretPasswordKey: REDIS_PASSWORD
+  master:
+    persistence:
+      size: 5Gi
+
+kafka:
+  enabled: true
+  replicaCount: 3
+  persistence:
+    size: 20Gi
+
+postgresql:
+  enabled: true
+  auth:
+    existingSecret: auction-system-secrets
+  primary:
+    persistence:
+      size: 50Gi
+
+# Ingress
+ingress:
+  enabled: true
+  className: nginx
+  host: auction.com
+  tls:
+    enabled: true
+    secretName: auction-tls
+
+# Monitoring
+monitoring:
+  enabled: true
+  prometheus:
+    scrapeInterval: 15s
+  grafana:
+    enabled: true

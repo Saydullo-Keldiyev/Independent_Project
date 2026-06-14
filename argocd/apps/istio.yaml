@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: auction-system-istio
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: istio
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: auction-system
+  source:
+    repoURL: https://github.com/Saydullo-Keldiyev/auction-system
+    targetRevision: HEAD
+    path: deployments/k8s/platform/istio
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: auction-system
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+      - ApplyOutOfSyncOnly=true

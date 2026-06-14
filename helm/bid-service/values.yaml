@@ -1,0 +1,115 @@
+# Default values — overridden by values-dev.yaml / values-staging.yaml / values-prod.yaml
+
+replicaCount: 3
+
+image:
+  repository: ghcr.io/Saydullo-Keldiyev/bid-service
+  tag: latest          # overridden by CI with commit SHA
+  pullPolicy: Always
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8082
+
+ingress:
+  enabled: false       # enabled in prod via values-prod.yaml
+  className: nginx
+  host: api.auction.com
+  tls:
+    enabled: true
+    secretName: auction-tls-cert
+
+resources:
+  requests:
+    cpu: "250m"
+    memory: "256Mi"
+  limits:
+    cpu: "1000m"
+    memory: "512Mi"
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 20
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 75
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+# Probes
+readinessProbe:
+  path: /ready
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  failureThreshold: 3
+
+livenessProbe:
+  path: /health
+  initialDelaySeconds: 20
+  periodSeconds: 20
+  failureThreshold: 3
+
+startupProbe:
+  path: /health
+  failureThreshold: 30
+  periodSeconds: 2
+
+# Security
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65532       # distroless nonroot uid
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+
+# Anti-affinity — spread across nodes
+podAntiAffinity:
+  enabled: true
+  required: true         # set false in dev to allow single-node
+
+# Multi-zone spread
+topologySpread:
+  enabled: true
+
+# Lifecycle
+terminationGracePeriodSeconds: 60
+preStopSleepSeconds: 10
+
+# Environment
+env:
+  APP_ENV: production
+  APP_PORT: "8082"
+  REDIS_DB: "0"
+  KAFKA_TOPIC: bid-events
+  KAFKA_GROUP_ID: bid-service
+  LOCK_TTL_SECONDS: "5"
+  RATE_LIMIT_RPS: "100"
+  RATE_LIMIT_BURST: "20"
+
+# ConfigMap references
+configMapRef: auction-system-config
+
+# Secret references
+secretRef: auction-system-secrets
+
+# Observability
+observability:
+  prometheus:
+    enabled: true
+    port: 8082
+    path: /metrics
+  tracing:
+    enabled: true
+    otlpEndpoint: jaeger-collector.monitoring.svc.cluster.local:4318
+
+# Service account
+serviceAccount:
+  name: auction-service-account
+
+# Node selector / tolerations
+nodeSelector: {}
+tolerations: []

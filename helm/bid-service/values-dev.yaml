@@ -1,0 +1,32 @@
+# Development overrides — relaxed constraints, single replica
+replicaCount: 1
+
+image:
+  pullPolicy: IfNotPresent
+
+resources:
+  requests:
+    cpu: "50m"
+    memory: "64Mi"
+  limits:
+    cpu: "200m"
+    memory: "128Mi"
+
+autoscaling:
+  enabled: false
+
+podDisruptionBudget:
+  enabled: false
+
+podAntiAffinity:
+  required: false   # allow scheduling on single node (minikube/kind)
+
+topologySpread:
+  enabled: false
+
+env:
+  APP_ENV: development
+
+observability:
+  tracing:
+    enabled: false   # no Jaeger in dev by default

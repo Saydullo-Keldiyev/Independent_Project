@@ -1,0 +1,134 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bid-service
+  namespace: auction-system
+  labels:
+    app: bid-service
+    version: v1
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port:   "8082"
+    prometheus.io/path:   "/metrics"
+spec:
+  replicas: 3
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+
+  selector:
+    matchLabels:
+      app: bid-service
+
+  template:
+    metadata:
+      labels:
+        app: bid-service
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port:   "8082"
+        prometheus.io/path:   "/metrics"
+    spec:
+      terminationGracePeriodSeconds: 60  # longer for WebSocket drain
+
+      # Multi-zone spread
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: bid-service
+
+      # Anti-affinity — spread across nodes
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: bid-service
+              topologyKey: kubernetes.io/hostname
+
+      containers:
+        - name: bid-service
+          image: ghcr.io/Saydullo-Keldiyev/bid-service:sha-0000000
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8082
+              protocol: TCP
+
+          envFrom:
+            - configMapRef:
+                name: auction-system-config
+
+          env:
+            - name: APP_PORT
+              value: "8082"
+            - name: DB_URL
+              valueFrom:
+                secretKeyRef:
+                  name: auction-system-secrets
+                  key: DB_URL
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: auction-system-secrets
+                  key: JWT_SECRET
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: auction-system-secrets
+                  key: REDIS_PASSWORD
+
+          resources:
+            requests:
+              cpu:    "250m"
+              memory: "256Mi"
+            limits:
+              cpu:    "1000m"
+              memory: "512Mi"
+
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8082
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+            successThreshold: 1
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8082
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            failureThreshold: 3
+
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8082
+            failureThreshold: 30
+            periodSeconds: 2
+
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
+          # Graceful shutdown hook — drain WebSocket connections
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 10"]
+
+      serviceAccountName: auction-service-account

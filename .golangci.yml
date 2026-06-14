@@ -1,0 +1,57 @@
+run:
+  timeout: 5m
+  go: "1.22"
+
+linters:
+  enable:
+    - errcheck        # check error returns
+    - gosimple        # simplification suggestions
+    - govet           # go vet checks
+    - ineffassign     # detect ineffectual assignments
+    - staticcheck     # static analysis
+    - unused          # unused code
+    - gosec           # security issues
+    - gocyclo         # cyclomatic complexity
+    - misspell        # spelling mistakes
+    - gofmt           # formatting
+    - goimports       # import ordering
+    - revive          # replacement for golint
+    - bodyclose       # http response body close check
+    - contextcheck    # context usage
+    - noctx           # http request without context
+    - sqlclosecheck   # sql rows/stmt close check
+    - exhaustive      # enum switch exhaustiveness
+
+linters-settings:
+  gocyclo:
+    min-complexity: 15
+
+  gosec:
+    excludes:
+      - G104   # errors unhandled (covered by errcheck)
+
+  revive:
+    rules:
+      - name: exported
+        severity: warning
+      - name: var-naming
+        severity: warning
+
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+
+issues:
+  exclude-rules:
+    # Test files — relax some rules
+    - path: _test\.go
+      linters:
+        - gosec
+        - errcheck
+    # Generated files
+    - path: \.pb\.go
+      linters:
+        - all
+
+  max-issues-per-linter: 50
+  max-same-issues: 10

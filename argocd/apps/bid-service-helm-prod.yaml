@@ -1,0 +1,26 @@
+# Optional: Helm deploy for bid-service (manual sync — enable only if not using Kustomize overlay)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: bid-service-helm-prod
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: bid-service
+spec:
+  project: auction-system
+  source:
+    repoURL: https://github.com/Saydullo-Keldiyev/auction-system
+    targetRevision: main
+    path: helm/bid-service
+    helm:
+      valueFiles:
+        - values-prod.yaml
+      parameters:
+        - name: image.repository
+          value: ghcr.io/Saydullo-Keldiyev/bid-service
+        - name: image.tag
+          value: sha-0000000
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: auction-system

@@ -1,0 +1,63 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: auction-system-staging
+
+resources:
+  - namespace.yaml
+  - ../../configmap.yaml
+  - ../../rbac.yaml
+  - ../../gateway
+  - ../../bid-service
+  - ../../user-service
+  - ../../auction-service
+  - ../../notification-service
+  - sealed-secret.yaml
+
+labels:
+  - pairs:
+      environment: staging
+    includeSelectors: false
+
+patches:
+  - path: patches/configmap-env.yaml
+    target:
+      kind: ConfigMap
+      name: auction-system-config
+  - path: patches/replica-bid-service.yaml
+    target:
+      kind: Deployment
+      name: bid-service
+  - path: patches/replica-api-gateway.yaml
+    target:
+      kind: Deployment
+      name: api-gateway
+  - path: patches/replica-user-service.yaml
+    target:
+      kind: Deployment
+      name: user-service
+  - path: patches/replica-auction-service.yaml
+    target:
+      kind: Deployment
+      name: auction-service
+  - path: patches/replica-notification-service.yaml
+    target:
+      kind: Deployment
+      name: notification-service
+
+images:
+  - name: ghcr.io/Saydullo-Keldiyev/bid-service
+    newName: ghcr.io/Saydullo-Keldiyev/bid-service
+    newTag: sha-0000000
+  - name: ghcr.io/Saydullo-Keldiyev/api-gateway
+    newName: ghcr.io/Saydullo-Keldiyev/api-gateway
+    newTag: sha-0000000
+  - name: ghcr.io/Saydullo-Keldiyev/user-service
+    newName: ghcr.io/Saydullo-Keldiyev/user-service
+    newTag: sha-0000000
+  - name: ghcr.io/Saydullo-Keldiyev/auction-service
+    newName: ghcr.io/Saydullo-Keldiyev/auction-service
+    newTag: sha-0000000
+  - name: ghcr.io/Saydullo-Keldiyev/notification-service
+    newName: ghcr.io/Saydullo-Keldiyev/notification-service
+    newTag: sha-0000000

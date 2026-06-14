@@ -1,0 +1,95 @@
+# ArgoCD Notifications — Slack alerts for deploy events
+# Apply: kubectl apply -n argocd -f argocd/notifications-config.yaml
+#
+# Install notifications controller:
+#   kubectl apply -n argocd \
+#     -f https://raw.githubusercontent.com/argoproj-labs/argocd-notifications/stable/manifests/install.yaml
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-notifications-cm
+  namespace: argocd
+data:
+  # ── Notification triggers ──────────────────────────────────────────────────
+  trigger.on-sync-succeeded: |
+    - when: app.status.operationState.phase in ['Succeeded']
+      send: [app-sync-succeeded]
+
+  trigger.on-sync-failed: |
+    - when: app.status.operationState.phase in ['Error', 'Failed']
+      send: [app-sync-failed]
+
+  trigger.on-health-degraded: |
+    - when: app.status.health.status == 'Degraded'
+      send: [app-health-degraded]
+
+  trigger.on-deployed: |
+    - when: app.status.operationState.phase in ['Succeeded'] && app.status.health.status == 'Healthy'
+      send: [app-deployed]
+
+  # ── Message templates ──────────────────────────────────────────────────────
+  template.app-sync-succeeded: |
+    slack:
+      attachments: |
+        [{
+          "color": "#18be52",
+          "title": "✅ {{.app.metadata.name}} deployed successfully",
+          "fields": [
+            {"title": "Environment", "value": "{{.app.metadata.namespace}}", "short": true},
+            {"title": "Revision",    "value": "{{.app.status.sync.revision | truncate 7 ''}}", "short": true},
+            {"title": "Duration",    "value": "{{.app.status.operationState.finishedAt}}", "short": true}
+          ]
+        }]
+
+  template.app-sync-failed: |
+    slack:
+      attachments: |
+        [{
+          "color": "#E96D76",
+          "title": "❌ {{.app.metadata.name}} sync FAILED",
+          "fields": [
+            {"title": "Error",    "value": "{{.app.status.operationState.message}}", "short": false},
+            {"title": "Revision", "value": "{{.app.status.sync.revision | truncate 7 ''}}", "short": true}
+          ]
+        }]
+
+  template.app-health-degraded: |
+    slack:
+      attachments: |
+        [{
+          "color": "#f4c030",
+          "title": "⚠️ {{.app.metadata.name}} health DEGRADED",
+          "fields": [
+            {"title": "Status", "value": "{{.app.status.health.status}}", "short": true}
+          ]
+        }]
+
+  template.app-deployed: |
+    slack:
+      attachments: |
+        [{
+          "color": "#18be52",
+          "title": "🚀 {{.app.metadata.name}} is live",
+          "fields": [
+            {"title": "Revision", "value": "{{.app.status.sync.revision | truncate 7 ''}}", "short": true},
+            {"title": "Health",   "value": "{{.app.status.health.status}}", "short": true}
+          ]
+        }]
+
+  # ── Slack service config ───────────────────────────────────────────────────
+  service.slack: |
+    token: $slack-token
+    channels:
+      auction-deploys: C0123456789
+      auction-alerts:  C9876543210
+---
+# Slack token secret — seal with kubeseal before committing
+apiVersion: v1
+kind: Secret
+metadata:
+  name: argocd-notifications-secret
+  namespace: argocd
+type: Opaque
+stringData:
+  slack-token: "xoxb-your-slack-bot-token"   # replace with real token

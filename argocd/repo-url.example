@@ -1,0 +1,4 @@
+# GitHub repository for ArgoCD GitOps
+# https://github.com/Saydullo-Keldiyev/auction-system
+
+ARGOCD_REPO_URL=https://github.com/Saydullo-Keldiyev/auction-system

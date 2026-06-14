@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: auction-system-dev
+  labels:
+    name: auction-system-dev
+    environment: development
+    istio-injection: enabled

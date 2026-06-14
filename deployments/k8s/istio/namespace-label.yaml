@@ -1,0 +1,15 @@
+# Enable Istio sidecar injection for the auction-system namespace.
+# After applying this, all new pods get an Envoy proxy sidecar automatically.
+#
+# Install Istio first:
+#   istioctl install --set profile=production -y
+#   kubectl label namespace auction-system istio-injection=enabled
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: auction-system
+  labels:
+    name: auction-system
+    istio-injection: enabled      # ← this enables automatic sidecar injection
+    environment: production

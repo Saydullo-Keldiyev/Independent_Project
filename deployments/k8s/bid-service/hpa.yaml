@@ -1,0 +1,52 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: bid-service-hpa
+  namespace: auction-system
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: bid-service
+
+  minReplicas: 3
+  maxReplicas: 20   # bid-service handles the most load — allow aggressive scaling
+
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 75
+
+    # Custom metric: scale on active WebSocket connections
+    # Requires prometheus-adapter to expose this metric to k8s
+    - type: Pods
+      pods:
+        metric:
+          name: bid_service_websocket_connections_active
+        target:
+          type: AverageValue
+          averageValue: "500"   # scale when avg >500 WS connections per pod
+
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30   # react fast to bid spikes
+      policies:
+        - type: Pods
+          value: 3
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120

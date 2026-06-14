@@ -1,0 +1,45 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-gateway-hpa
+  namespace: auction-system
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api-gateway
+
+  minReplicas: 3
+  maxReplicas: 10
+
+  metrics:
+    # Scale on CPU utilization
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+
+    # Scale on memory utilization
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+  # Scaling behavior — prevent thrashing
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60   # wait 60s before scaling up again
+      policies:
+        - type: Pods
+          value: 2                      # add at most 2 pods at a time
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300  # wait 5min before scaling down
+      policies:
+        - type: Pods
+          value: 1                      # remove at most 1 pod at a time
+          periodSeconds: 120

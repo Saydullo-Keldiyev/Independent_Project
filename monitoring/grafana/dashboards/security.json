@@ -1,0 +1,369 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Security metrics: rate limit hits, authentication failures, and blocked IPs with 15-minute sliding window",
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Rate Limit Hits (15m window)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No Data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 100 },
+              { "color": "red", "value": 500 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(rate_limit_hits_total{namespace=\"auction-system\"}[15m])) by (endpoint)",
+          "legendFormat": "{{endpoint}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Authentication Failures (15m window)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No Data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 50 },
+              { "color": "red", "value": 200 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(auth_failures_total{namespace=\"auction-system\"}[15m])) by (reason)",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Currently Blocked IPs",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No Data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 20 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate_limit_blocked_ips{namespace=\"auction-system\"})",
+          "legendFormat": "Blocked IPs",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      }
+    },
+    {
+      "title": "Rate Limit Hits Total (15m)",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No Data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 100 },
+              { "color": "red", "value": 1000 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(rate_limit_hits_total{namespace=\"auction-system\"}[15m]))",
+          "legendFormat": "Total Hits",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      }
+    },
+    {
+      "title": "Auth Failures Total (15m)",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No Data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 20 },
+              { "color": "red", "value": 100 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(auth_failures_total{namespace=\"auction-system\"}[15m]))",
+          "legendFormat": "Total Failures",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      }
+    },
+    {
+      "title": "Service Auth Failures (15m)",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No Data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 20 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(service_auth_failures_total{namespace=\"auction-system\"}[15m]))",
+          "legendFormat": "Service Auth Failures",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      }
+    },
+    {
+      "title": "Blocked IPs Over Time (15m window)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No Data"
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate_limit_blocked_ips{namespace=\"auction-system\"}",
+          "legendFormat": "Blocked IPs",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(increase(rate_limit_ip_blocks_total{namespace=\"auction-system\"}[15m]))",
+          "legendFormat": "New Blocks (15m)",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "title": "Rate Limit Violations by IP (Top 10)",
+      "type": "table",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No Data"
+        }
+      },
+      "targets": [
+        {
+          "expr": "topk(10, sum(increase(rate_limit_violations_total{namespace=\"auction-system\"}[15m])) by (ip))",
+          "legendFormat": "{{ip}}",
+          "refId": "A",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "__name__": true, "instance": true, "job": true, "namespace": true },
+            "renameByName": { "ip": "IP Address", "Value": "Violations (15m)" }
+          }
+        }
+      ]
+    },
+    {
+      "title": "Auth Failures by Source",
+      "type": "piechart",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 22 },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No Data"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(auth_failures_total{namespace=\"auction-system\"}[15m])) by (reason)",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "HTTP 429 Rate (Rate Limit Responses)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 22 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "noValue": "No Data"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{namespace=\"auction-system\", status=\"429\"}[5m])) by (service)",
+          "legendFormat": "{{service}} 429s",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(rate(http_requests_total{namespace=\"auction-system\", status=\"403\"}[5m])) by (service)",
+          "legendFormat": "{{service}} 403s",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "title": "Failed Login Attempts (15m window)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 30 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No Data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 20 },
+              { "color": "red", "value": 50 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(login_failures_total{namespace=\"auction-system\"}[15m]))",
+          "legendFormat": "Failed Logins",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Service-to-Service Auth Rejections",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 30 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No Data"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(increase(service_auth_failures_total{namespace=\"auction-system\"}[15m])) by (source_service, target_service)",
+          "legendFormat": "{{source_service}} → {{target_service}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["auction-system", "security"],
+  "templating": {
+    "list": [
+      {
+        "name": "window",
+        "type": "interval",
+        "query": "5m,15m,30m,1h",
+        "current": {
+          "selected": true,
+          "text": "15m",
+          "value": "15m"
+        },
+        "label": "Sliding Window"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": ["30s", "1m", "5m", "15m", "30m"],
+    "time_options": ["15m", "30m", "1h", "6h", "12h", "24h", "7d", "15d"]
+  },
+  "timezone": "browser",
+  "title": "Auction System - Security",
+  "uid": "auction-security",
+  "version": 1
+}

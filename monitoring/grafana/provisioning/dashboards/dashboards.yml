@@ -1,0 +1,12 @@
+apiVersion: 1
+
+providers:
+  - name: "Auction System"
+    orgId: 1
+    folder: "Auction System"
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false

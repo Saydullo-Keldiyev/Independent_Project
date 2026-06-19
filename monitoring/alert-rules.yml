@@ -1,0 +1,32 @@
+groups:
+  - name: auction-system-alerts
+    rules:
+      - alert: HighErrorRate
+        expr: |
+          (sum(rate(http_requests_total{status=~"5.."}[5m])) by (job)
+          / sum(rate(http_requests_total[5m])) by (job)) > 0.05
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High error rate on {{ $labels.job }}"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[5m])) by (job, le)) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High P99 latency on {{ $labels.job }}"
+          description: "P99 latency is {{ $value }}s (threshold: 2s)"
+
+      - alert: ServiceDown
+        expr: up == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "{{ $labels.job }} has been unreachable for 30 seconds"

@@ -1,0 +1,42 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+rule_files:
+  - "alert-rules.yml"
+
+scrape_configs:
+  - job_name: "api-gateway"
+    static_configs:
+      - targets: ["api-gateway:8080"]
+    metrics_path: /metrics
+
+  - job_name: "user-service"
+    static_configs:
+      - targets: ["user-service:8081"]
+    metrics_path: /metrics
+
+  - job_name: "bid-service"
+    static_configs:
+      - targets: ["bid-service:8082"]
+    metrics_path: /metrics
+
+  - job_name: "auction-service"
+    static_configs:
+      - targets: ["auction-service:8083"]
+    metrics_path: /metrics
+
+  - job_name: "notification-service"
+    static_configs:
+      - targets: ["notification-service:8084"]
+    metrics_path: /metrics
+
+  - job_name: "payment-service"
+    static_configs:
+      - targets: ["payment-service:8085"]
+    metrics_path: /metrics

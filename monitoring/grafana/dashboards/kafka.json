@@ -1,0 +1,314 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": "-- Grafana --",
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "Kafka metrics: consumer lag, throughput per topic, partition count, and DLQ count",
+  "editable": true,
+  "gnetId": null,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Consumer Lag by Group",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No Data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5000 },
+              { "color": "red", "value": 10000 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "kafka_consumer_group_lag{namespace=\"auction-system\"}",
+          "legendFormat": "{{consumergroup}} - {{topic}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Consumer Lag Total (All Groups)",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No Data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5000 },
+              { "color": "red", "value": 10000 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(kafka_consumer_group_lag{namespace=\"auction-system\"}) by (consumergroup)",
+          "legendFormat": "{{consumergroup}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "DLQ Message Count",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No Data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10 },
+              { "color": "red", "value": 100 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "kafka_dlq_messages_total{namespace=\"auction-system\"}",
+          "legendFormat": "{{topic}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Message Throughput per Topic (msg/s)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "No Data"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(kafka_topic_messages_total{namespace=\"auction-system\"}[5m])) by (topic)",
+          "legendFormat": "{{topic}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Consumer Throughput (msg/s)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "noValue": "No Data"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(kafka_consumer_messages_consumed_total{namespace=\"auction-system\"}[5m])) by (consumergroup, topic)",
+          "legendFormat": "{{consumergroup}} - {{topic}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Partition Count per Topic",
+      "type": "table",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No Data"
+        }
+      },
+      "targets": [
+        {
+          "expr": "kafka_topic_partitions{namespace=\"auction-system\"}",
+          "legendFormat": "{{topic}}",
+          "refId": "A",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "__name__": true, "instance": true, "job": true, "namespace": true },
+            "renameByName": { "topic": "Topic", "Value": "Partitions" }
+          }
+        }
+      ]
+    },
+    {
+      "title": "DLQ Messages per Topic",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No Data",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 50 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "expr": "increase(kafka_dlq_messages_total{namespace=\"auction-system\"}[5m])",
+          "legendFormat": "{{topic}} DLQ",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Consumer Processing Duration (P99)",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "No Data"
+        }
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(kafka_consumer_processing_duration_seconds_bucket{namespace=\"auction-system\"}[5m])) by (topic, le))",
+          "legendFormat": "{{topic}} P99",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Duplicate Events Detected",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No Data"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(duplicate_events_total{namespace=\"auction-system\"}[5m])) by (consumergroup)",
+          "legendFormat": "{{consumergroup}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Consumer Retry Count",
+      "type": "timeseries",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "No Data"
+        }
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(kafka_consumer_retries_total{namespace=\"auction-system\"}[5m])) by (topic)",
+          "legendFormat": "{{topic}} retries",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Kafka Broker Status",
+      "type": "stat",
+      "datasource": "Prometheus",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "No Data",
+          "mappings": [
+            { "options": { "0": { "text": "Down", "color": "red" }, "1": { "text": "Up", "color": "green" } }, "type": "value" }
+          ]
+        }
+      },
+      "targets": [
+        {
+          "expr": "kafka_broker_up",
+          "legendFormat": "Broker {{broker_id}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["auction-system", "kafka"],
+  "templating": {
+    "list": [
+      {
+        "name": "topic",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(kafka_topic_messages_total{namespace=\"auction-system\"}, topic)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true
+      },
+      {
+        "name": "consumergroup",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(kafka_consumer_group_lag{namespace=\"auction-system\"}, consumergroup)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": ["30s", "1m", "5m", "15m", "30m"],
+    "time_options": ["15m", "30m", "1h", "6h", "12h", "24h", "7d", "15d"]
+  },
+  "timezone": "browser",
+  "title": "Auction System - Kafka",
+  "uid": "auction-kafka",
+  "version": 1
+}

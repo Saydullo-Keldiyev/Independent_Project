@@ -1,6 +1,6 @@
 module github.com/auction-system/search-service
 
-go 1.22
+go 1.23
 
 require (
 	github.com/elastic/go-elasticsearch/v8 v8.13.1

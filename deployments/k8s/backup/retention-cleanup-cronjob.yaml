@@ -1,0 +1,153 @@
+# PostgreSQL Backup Retention Cleanup CronJob
+# Requirement 7.6:
+#   Retain database backups for a minimum of 30 days and a maximum of 90 days.
+#   Automatically delete backups older than the maximum retention period.
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup-retention-cleanup
+  namespace: auction-system
+  labels:
+    app: postgres-backup-retention
+    component: database
+    tier: infrastructure
+spec:
+  # Daily at 02:00 UTC
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        app: postgres-backup-retention
+        component: database
+    spec:
+      activeDeadlineSeconds: 600
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app: postgres-backup-retention
+            component: database
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: backup-service-account
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            fsGroup: 10001
+          containers:
+            - name: retention-cleanup
+              image: alpine:3.19
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+
+                  # ────────────────────────────────────────────────────────────
+                  # Configuration
+                  # Requirement 7.6: min 30 days, max 90 days retention
+                  # ────────────────────────────────────────────────────────────
+                  MIN_RETENTION_DAYS=${MIN_RETENTION_DAYS:-30}
+                  MAX_RETENTION_DAYS=${MAX_RETENTION_DAYS:-90}
+                  BACKUP_DIR="/backups/full"
+                  WAL_DIR="/backups/wal"
+
+                  echo "============================================================"
+                  echo "[$(date -Iseconds)] Backup Retention Cleanup Starting"
+                  echo "============================================================"
+                  echo "  Min retention: ${MIN_RETENTION_DAYS} days"
+                  echo "  Max retention: ${MAX_RETENTION_DAYS} days"
+                  echo "  Backup dir:    ${BACKUP_DIR}"
+                  echo "  WAL dir:       ${WAL_DIR}"
+                  echo ""
+
+                  # ────────────────────────────────────────────────────────────
+                  # Count current backups
+                  # ────────────────────────────────────────────────────────────
+                  TOTAL_BACKUPS=$(find "$BACKUP_DIR" -name "*.dump" -type f | wc -l)
+                  echo "[$(date -Iseconds)] Total backups found: ${TOTAL_BACKUPS}"
+
+                  # ────────────────────────────────────────────────────────────
+                  # Delete backups older than MAX_RETENTION_DAYS
+                  # ────────────────────────────────────────────────────────────
+                  echo "[$(date -Iseconds)] Removing backups older than ${MAX_RETENTION_DAYS} days..."
+
+                  DELETED_DUMPS=0
+                  DELETED_META=0
+
+                  # Find and delete old backup dumps
+                  for f in $(find "$BACKUP_DIR" -name "*.dump" -type f -mtime +${MAX_RETENTION_DAYS}); do
+                    echo "  Deleting: $(basename $f)"
+                    rm -f "$f"
+                    DELETED_DUMPS=$((DELETED_DUMPS + 1))
+
+                    # Also delete associated metadata file
+                    META_FILE="${f%.dump}.meta.json"
+                    if [ -f "$META_FILE" ]; then
+                      rm -f "$META_FILE"
+                      DELETED_META=$((DELETED_META + 1))
+                    fi
+                  done
+
+                  # ────────────────────────────────────────────────────────────
+                  # Clean orphaned metadata files (no corresponding dump)
+                  # ────────────────────────────────────────────────────────────
+                  ORPHANED=0
+                  for meta in $(find "$BACKUP_DIR" -name "*.meta.json" -type f); do
+                    DUMP_FILE="${meta%.meta.json}.dump"
+                    if [ ! -f "$DUMP_FILE" ]; then
+                      echo "  Removing orphaned metadata: $(basename $meta)"
+                      rm -f "$meta"
+                      ORPHANED=$((ORPHANED + 1))
+                    fi
+                  done
+
+                  # ────────────────────────────────────────────────────────────
+                  # Report disk usage
+                  # ────────────────────────────────────────────────────────────
+                  REMAINING_BACKUPS=$(find "$BACKUP_DIR" -name "*.dump" -type f | wc -l)
+                  BACKUP_DISK_USAGE=$(du -sh "$BACKUP_DIR" 2>/dev/null | cut -f1 || echo "0")
+                  WAL_DISK_USAGE=$(du -sh "$WAL_DIR" 2>/dev/null | cut -f1 || echo "0")
+
+                  echo ""
+                  echo "============================================================"
+                  echo "RETENTION CLEANUP REPORT"
+                  echo "============================================================"
+                  echo "  Deleted backups:      ${DELETED_DUMPS}"
+                  echo "  Deleted metadata:     ${DELETED_META}"
+                  echo "  Orphaned metadata:    ${ORPHANED}"
+                  echo "  Remaining backups:    ${REMAINING_BACKUPS}"
+                  echo "  Backup disk usage:    ${BACKUP_DISK_USAGE}"
+                  echo "  WAL disk usage:       ${WAL_DISK_USAGE}"
+                  echo "============================================================"
+
+                  # Verify we haven't deleted everything (safety check)
+                  if [ "$REMAINING_BACKUPS" -lt "$MIN_RETENTION_DAYS" ] && [ "$TOTAL_BACKUPS" -gt 0 ]; then
+                    echo "[$(date -Iseconds)] WARNING: Fewer backups remaining (${REMAINING_BACKUPS}) than min retention days (${MIN_RETENTION_DAYS})"
+                    echo "  This may indicate backups are not running on schedule."
+                  fi
+
+                  echo "[$(date -Iseconds)] ✅ Retention cleanup complete"
+              env:
+                - name: MIN_RETENTION_DAYS
+                  value: "30"
+                - name: MAX_RETENTION_DAYS
+                  value: "90"
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /backups
+              resources:
+                requests:
+                  cpu: "50m"
+                  memory: "64Mi"
+                limits:
+                  cpu: "200m"
+                  memory: "128Mi"
+          volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: postgres-backup-pvc

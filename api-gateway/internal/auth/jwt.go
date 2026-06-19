@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	pkgauth "github.com/auction-system/pkg/auth"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/redis/go-redis/v9"
 )
@@ -21,12 +22,23 @@ type Claims struct {
 }
 
 type Validator struct {
-	secret []byte
-	redis  *redis.Client
+	secret         []byte
+	redis          *redis.Client
+	keyRotationMgr *pkgauth.KeyRotationManager
 }
 
+// NewValidator creates a Validator using a static secret for token verification.
 func NewValidator(secret string, redis *redis.Client) *Validator {
 	return &Validator{secret: []byte(secret), redis: redis}
+}
+
+// NewValidatorWithKeyRotation creates a Validator that uses the key rotation manager
+// for token verification, supporting graceful key rotation with zero auth failures.
+func NewValidatorWithKeyRotation(keyRotationMgr *pkgauth.KeyRotationManager, redis *redis.Client) *Validator {
+	return &Validator{
+		keyRotationMgr: keyRotationMgr,
+		redis:          redis,
+	}
 }
 
 func (v *Validator) ParseBearer(authHeader string) (*Claims, string, error) {
@@ -45,6 +57,22 @@ func (v *Validator) ParseBearer(authHeader string) (*Claims, string, error) {
 		if val, err := v.redis.Get(ctx, blacklistPrefix+tokenStr).Result(); err == nil && val == "revoked" {
 			return nil, "", errors.New("token revoked")
 		}
+	}
+
+	// Use key rotation manager if available; otherwise fall back to static secret
+	if v.keyRotationMgr != nil {
+		pkgClaims, err := v.keyRotationMgr.VerifyToken(tokenStr)
+		if err != nil {
+			return nil, "", errors.New("invalid token")
+		}
+		// Convert pkg/auth Claims to gateway Claims
+		claims := &Claims{
+			UserID:           pkgClaims.UserID,
+			Email:            pkgClaims.Email,
+			Role:             pkgClaims.Role,
+			RegisteredClaims: pkgClaims.RegisteredClaims,
+		}
+		return claims, tokenStr, nil
 	}
 
 	claims := &Claims{}

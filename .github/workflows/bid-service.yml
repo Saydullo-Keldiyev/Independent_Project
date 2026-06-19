@@ -46,15 +46,25 @@ jobs:
       - name: Run tests with race detector
         run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
-      - name: Check test coverage threshold (>= 70%)
+      - name: Check test coverage threshold (>= 80%)
         run: |
           COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | tr -d '%')
           echo "Coverage: ${COVERAGE}%"
-          if (( $(echo "$COVERAGE < 70" | bc -l) )); then
-            echo "❌ Coverage ${COVERAGE}% is below 70% threshold"
+          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
+            echo "❌ Coverage ${COVERAGE}% is below 80% threshold"
             exit 1
           fi
           echo "✅ Coverage ${COVERAGE}% passes threshold"
+
+      - name: Run property-based tests (rapid, 100+ iterations)
+        run: |
+          PROP_FILES=$(grep -rl "rapid\." --include="*_test.go" . || true)
+          if [ -n "$PROP_FILES" ]; then
+            echo "Running property-based tests with 100+ iterations..."
+            go test -race -run "Property|Prop" -count=1 -timeout=300s -rapid.checks=100 ./...
+          else
+            echo "No property-based tests found, skipping."
+          fi
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -212,6 +222,7 @@ jobs:
 
       # Trivy — scan for CVEs, secrets, misconfigs
       - name: Run Trivy vulnerability scanner
+        id: trivy
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ env.IMAGE }}:sha-${{ github.sha }}
@@ -219,12 +230,20 @@ jobs:
           output: trivy-results.sarif
           severity: CRITICAL,HIGH
           exit-code: "1"   # fail pipeline on CRITICAL/HIGH CVEs
-        continue-on-error: true   # upload results even on failure
 
       - name: Upload Trivy SARIF to GitHub Security
+        if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy-results.sarif
+        continue-on-error: true
+
+      - name: Fail on CRITICAL/HIGH CVEs
+        if: steps.trivy.outcome == 'failure'
+        run: |
+          echo "❌ Build failed: Trivy detected CRITICAL or HIGH severity CVEs."
+          echo "   Review the SARIF results in GitHub Security tab for details."
+          exit 1
 
   update-manifest-dev:
     name: GitOps — Dev Overlay

@@ -1,0 +1,59 @@
+%% Auction System Data Flow - Bid Placement
+%% Format: Mermaid Sequence Diagram
+%% Last Updated: 2024-01-15
+
+sequenceDiagram
+    participant C as Client
+    participant GW as API Gateway
+    participant RL as Rate Limiter (Redis)
+    participant BS as Bid Service
+    participant DL as Distributed Lock (Redis)
+    participant PS as Payment Service
+    participant DB as PostgreSQL
+    participant OB as Outbox Publisher
+    participant K as Kafka
+    participant NS as Notification Service
+
+    C->>GW: POST /api/v1/bids<br/>(JWT + Correlation-ID)
+    
+    Note over GW: Correlation ID middleware<br/>Generate/Forward UUID v4
+    
+    GW->>RL: Check rate limit
+    RL-->>GW: Allowed (sliding window)
+    
+    Note over GW: Auth + RBAC validation<br/>Circuit breaker wraps call
+    
+    GW->>BS: Forward request<br/>(mTLS + service token)
+    
+    Note over BS: Input validation<br/>(pkg/validation)
+    
+    BS->>DL: Acquire lock<br/>(auction:{id}, fencing token)
+    DL-->>BS: Lock acquired (token: N)
+    
+    BS->>PS: Hold funds (service token)
+    
+    Note over PS: SELECT FOR UPDATE<br/>on wallet row
+    
+    PS->>DB: BEGIN + Hold + Outbox entry
+    DB-->>PS: COMMIT
+    PS-->>BS: Hold confirmed
+
+    BS->>DB: BEGIN + Place bid
+    DB-->>BS: COMMIT
+    
+    BS->>DL: Release lock (verify token N)
+    DL-->>BS: Released
+    
+    BS-->>GW: 201 Created
+    GW-->>C: 201 Created
+
+    Note over OB: Background polling (1s interval)
+    OB->>DB: SELECT unpublished outbox entries
+    OB->>K: Publish events (event_id: UUID v4)
+    OB->>DB: UPDATE published_at
+
+    K->>NS: Consume bid.placed event
+    
+    Note over NS: Idempotency check<br/>(Redis processed-events store)
+    
+    NS->>C: WebSocket notification

@@ -7,11 +7,15 @@ import (
 	"github.com/segmentio/kafka-go"
 	"go.uber.org/zap"
 
+	"github.com/auction-system/payment-service/internal/model"
 	"github.com/auction-system/payment-service/internal/repository"
 )
 
 // OutboxWorker polls the outbox table and publishes events to Kafka.
-// Guarantees at-least-once delivery without distributed transactions.
+// It guarantees at-least-once delivery without distributed transactions.
+// Handles retry_count and last_error tracking for failed publish attempts.
+//
+// Requirements: 8.6
 type OutboxWorker struct {
 	writer   *kafka.Writer
 	log      *zap.Logger
@@ -25,6 +29,7 @@ func NewOutboxWorker(brokers []string, topic string, log *zap.Logger) *OutboxWor
 			Topic:                  topic,
 			Balancer:               &kafka.LeastBytes{},
 			WriteTimeout:           10 * time.Second,
+			RequiredAcks:           kafka.RequireAll,
 			AllowAutoTopicCreation: true,
 		},
 		log:      log,
@@ -61,33 +66,62 @@ func (w *OutboxWorker) processOutbox(ctx context.Context) {
 		return
 	}
 
+	published := 0
+	failed := 0
+
 	for _, event := range events {
+		if ctx.Err() != nil {
+			return
+		}
+
 		msg := kafka.Message{
-			Key:   []byte(event.EventType),
+			Key:   []byte(event.AggregateID),
 			Value: []byte(event.Payload),
 			Time:  event.CreatedAt,
 			Headers: []kafka.Header{
 				{Key: "aggregate_type", Value: []byte(event.AggregateType)},
 				{Key: "aggregate_id", Value: []byte(event.AggregateID)},
+				{Key: "event_type", Value: []byte(event.EventType)},
+				{Key: "outbox_id", Value: []byte(event.ID)},
 			},
 		}
 
 		if err := w.writer.WriteMessages(ctx, msg); err != nil {
-			w.log.Error("failed to publish outbox event",
+			failed++
+			w.log.Warn("outbox event publish failed",
 				zap.String("event_id", event.ID),
 				zap.String("event_type", event.EventType),
+				zap.Int("retry_count", event.RetryCount+1),
+				zap.Int("max_retries", model.MaxOutboxRetries),
 				zap.Error(err),
 			)
-			continue // retry next tick
+			// Record the failure: increment retry_count and store last_error
+			if recordErr := repository.RecordOutboxFailure(ctx, event.ID, err.Error()); recordErr != nil {
+				w.log.Error("failed to record outbox failure",
+					zap.String("event_id", event.ID),
+					zap.Error(recordErr),
+				)
+			}
+			continue
 		}
 
-		// Mark as processed only after successful Kafka publish
+		// Mark as published only after successful Kafka publish
+		published++
 		if err := repository.MarkProcessed(ctx, event.ID); err != nil {
-			w.log.Error("failed to mark event processed", zap.String("event_id", event.ID), zap.Error(err))
+			w.log.Error("failed to mark event published",
+				zap.String("event_id", event.ID),
+				zap.Error(err),
+			)
 		}
 	}
 
-	w.log.Debug("outbox batch processed", zap.Int("count", len(events)))
+	if published > 0 || failed > 0 {
+		w.log.Info("outbox batch completed",
+			zap.Int("published", published),
+			zap.Int("failed", failed),
+			zap.Int("total", len(events)),
+		)
+	}
 }
 
 func (w *OutboxWorker) Close() error {

@@ -1,0 +1,24 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: auction-system
+
+resources:
+  # Namespace with Pod Security Standards labels
+  - namespace.yaml
+  # Default-deny ingress and egress
+  - default-deny.yaml
+  # DNS egress for all pods
+  - allow-dns.yaml
+  # Per-service NetworkPolicies
+  - netpol-api-gateway.yaml
+  - netpol-bid-service.yaml
+  - netpol-auction-service.yaml
+  - netpol-user-service.yaml
+  - netpol-notification-service.yaml
+  - netpol-payment-service.yaml
+  - netpol-search-service.yaml
+
+commonLabels:
+  app.kubernetes.io/managed-by: kustomize
+  app.kubernetes.io/part-of: auction-system

@@ -1,0 +1,100 @@
+# NetworkPolicy for notification-service
+# Requirement 20.1: api-gateway to notification-service,
+#                    auction-service to notification-service
+# Requirement 20.2: Explicit ingress allow rules
+# Requirement 20.7: Explicit egress allow rules
+#
+# Ingress: from api-gateway, from auction-service
+# Egress: to Kafka (event consumption), to external SMTP (email delivery)
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-notification-service-ingress
+  namespace: auction-system
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: network-security
+spec:
+  podSelector:
+    matchLabels:
+      app: notification-service
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow traffic from api-gateway
+    - from:
+        - podSelector:
+            matchLabels:
+              app: api-gateway
+      ports:
+        - protocol: TCP
+          port: 8084
+    # Allow traffic from auction-service (declared dependency per Req 20.1)
+    - from:
+        - podSelector:
+            matchLabels:
+              app: auction-service
+      ports:
+        - protocol: TCP
+          port: 8084
+    # Allow Prometheus scraping
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8084
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-notification-service-egress
+  namespace: auction-system
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: network-security
+spec:
+  podSelector:
+    matchLabels:
+      app: notification-service
+  policyTypes:
+    - Egress
+  egress:
+    # To Kafka (event consumption)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: auction-system
+          podSelector:
+            matchLabels:
+              app: kafka
+      ports:
+        - protocol: TCP
+          port: 9092
+    # To Redis (pub/sub for WebSocket)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: auction-system
+          podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    # To external SMTP (email delivery) — restrict to port 587/465
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - protocol: TCP
+          port: 587
+        - protocol: TCP
+          port: 465

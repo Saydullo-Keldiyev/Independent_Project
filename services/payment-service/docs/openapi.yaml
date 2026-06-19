@@ -1,0 +1,499 @@
+openapi: 3.0.3
+info:
+  title: Payment Service API
+  description: |
+    Manages wallet operations, fund holds, settlements, and transaction history.
+    All financial operations are ACID-compliant with saga pattern for cross-service transactions.
+
+    ## API Versioning
+    - Current versions: v1
+    - Version prefix: /api/v1
+    - Backward compatibility guaranteed within major version for 6 months minimum
+    - Deprecated versions include `Deprecation` header with sunset date (RFC 7231)
+    - After sunset date, endpoints return HTTP 410
+
+    ## Deprecation Policy
+    - Deprecated endpoints are announced 90+ days before removal
+    - CHANGELOG.md documents all additions, deprecations, and breaking changes
+
+    ## Idempotency
+    - All wallet mutations support Idempotency-Key header
+    - Duplicate requests with same key return cached result
+  version: 1.0.0
+  contact:
+    name: Platform Team
+    email: platform@auction.com
+
+servers:
+  - url: http://localhost:8084
+    description: Local Development (Direct)
+  - url: http://localhost:8080
+    description: Local Development (via API Gateway)
+  - url: https://api.auction.com
+    description: Production
+
+tags:
+  - name: Wallet
+    description: Wallet balance and operations
+  - name: Payments
+    description: Internal payment operations (service-to-service)
+  - name: Health
+    description: Service health endpoints
+
+paths:
+  /api/v1/wallet:
+    get:
+      tags: [Wallet]
+      operationId: getWallet
+      summary: Get wallet balance
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Wallet information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WalletResponse'
+        '401':
+          description: Unauthorized
+
+  /api/v1/wallet/deposit:
+    post:
+      tags: [Wallet]
+      operationId: deposit
+      summary: Deposit funds to wallet
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Unique key to prevent duplicate deposits
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DepositRequest'
+      responses:
+        '200':
+          description: Deposit successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionResponse'
+        '400':
+          description: Validation error (invalid amount)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+        '413':
+          description: Request payload too large (>1MB)
+
+  /api/v1/wallet/withdraw:
+    post:
+      tags: [Wallet]
+      operationId: withdraw
+      summary: Withdraw funds from wallet
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Unique key to prevent duplicate withdrawals
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WithdrawRequest'
+      responses:
+        '200':
+          description: Withdrawal successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionResponse'
+        '400':
+          description: Insufficient balance or validation error
+        '401':
+          description: Unauthorized
+
+  /api/v1/wallet/history:
+    get:
+      tags: [Wallet]
+      operationId: getTransactionHistory
+      summary: Get transaction history
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [deposit, withdraw, hold, release, charge, credit]
+      responses:
+        '200':
+          description: Transaction history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionListResponse'
+        '401':
+          description: Unauthorized
+
+  /api/v1/payments/hold:
+    post:
+      tags: [Payments]
+      operationId: holdFunds
+      summary: Hold balance for bid (internal service call)
+      description: |
+        Called by bid-service via service-to-service auth.
+        Uses SELECT FOR UPDATE locking. Atomic with bid placement.
+      security:
+        - BearerAuth: []
+        - ServiceAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HoldRequest'
+      responses:
+        '200':
+          description: Balance held successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransactionResponse'
+        '400':
+          description: Insufficient balance
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Service authentication failed
+
+  /api/v1/payments/release:
+    post:
+      tags: [Payments]
+      operationId: releaseFunds
+      summary: Release held funds (internal service call)
+      security:
+        - ServiceAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReleaseRequest'
+      responses:
+        '200':
+          description: Funds released
+        '400':
+          description: Hold not found or already released
+        '403':
+          description: Service authentication failed
+
+  /api/v1/payments/charge:
+    post:
+      tags: [Payments]
+      operationId: chargeFunds
+      summary: Charge held funds (internal service call for settlement)
+      security:
+        - ServiceAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChargeRequest'
+      responses:
+        '200':
+          description: Funds charged
+        '400':
+          description: Hold not found or insufficient held amount
+        '403':
+          description: Service authentication failed
+
+  /api/v1/payments/credit:
+    post:
+      tags: [Payments]
+      operationId: creditFunds
+      summary: Credit funds to seller wallet (internal service call for settlement)
+      security:
+        - ServiceAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreditRequest'
+      responses:
+        '200':
+          description: Funds credited
+        '403':
+          description: Service authentication failed
+
+  /health:
+    get:
+      tags: [Health]
+      operationId: healthCheck
+      summary: Liveness probe
+      responses:
+        '200':
+          description: Service is alive
+
+  /ready:
+    get:
+      tags: [Health]
+      operationId: readinessCheck
+      summary: Readiness probe
+      responses:
+        '200':
+          description: Service is ready
+        '503':
+          description: Dependencies unhealthy
+
+  /metrics:
+    get:
+      tags: [Health]
+      operationId: getMetrics
+      summary: Prometheus metrics endpoint
+      responses:
+        '200':
+          description: Prometheus text format metrics
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    ServiceAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: ServiceToken
+      description: Signed service token (≤24h expiry, rotated every 7 days)
+
+  schemas:
+    DepositRequest:
+      type: object
+      required: [amount]
+      properties:
+        amount:
+          type: number
+          format: double
+          minimum: 0.01
+          maximum: 999999999.99
+
+    WithdrawRequest:
+      type: object
+      required: [amount]
+      properties:
+        amount:
+          type: number
+          format: double
+          minimum: 0.01
+          maximum: 999999999.99
+
+    HoldRequest:
+      type: object
+      required: [user_id, auction_id, amount]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        auction_id:
+          type: string
+          format: uuid
+        amount:
+          type: number
+          format: double
+          minimum: 0.01
+          maximum: 999999999.99
+
+    ReleaseRequest:
+      type: object
+      required: [user_id, auction_id]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        auction_id:
+          type: string
+          format: uuid
+
+    ChargeRequest:
+      type: object
+      required: [user_id, auction_id, amount]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        auction_id:
+          type: string
+          format: uuid
+        amount:
+          type: number
+          format: double
+          minimum: 0.01
+
+    CreditRequest:
+      type: object
+      required: [user_id, auction_id, amount]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        auction_id:
+          type: string
+          format: uuid
+        amount:
+          type: number
+          format: double
+          minimum: 0.01
+
+    WalletResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        available_balance:
+          type: number
+          format: double
+        held_balance:
+          type: number
+          format: double
+        total_balance:
+          type: number
+          format: double
+        currency:
+          type: string
+          example: USD
+
+    TransactionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        wallet_id:
+          type: string
+          format: uuid
+        operation_type:
+          type: string
+          enum: [deposit, withdraw, hold, release, charge, credit]
+        amount:
+          type: number
+          format: double
+        balance_before:
+          type: number
+          format: double
+        balance_after:
+          type: number
+          format: double
+        idempotency_key:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    TransactionListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            transactions:
+              type: array
+              items:
+                $ref: '#/components/schemas/TransactionResponse'
+            total:
+              type: integer
+            page:
+              type: integer
+            page_size:
+              type: integer
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  message:
+                    type: string
+        correlation_id:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time

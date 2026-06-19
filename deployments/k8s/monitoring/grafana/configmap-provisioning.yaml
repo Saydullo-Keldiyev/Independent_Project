@@ -1,0 +1,26 @@
+---
+# ConfigMap: Grafana dashboard provisioning configuration
+# This tells Grafana where to find dashboard JSON files
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provisioning
+  namespace: monitoring
+  labels:
+    app: grafana
+    component: provisioning
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: "auction-system"
+        orgId: 1
+        folder: "Auction System"
+        type: file
+        disableDeletion: false
+        editable: true
+        updateIntervalSeconds: 60
+        allowUiUpdates: true
+        options:
+          path: /etc/grafana/dashboards
+          foldersFromFilesStructure: false

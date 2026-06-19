@@ -1,0 +1,30 @@
+# Default-deny ingress and egress NetworkPolicies for auction-system namespace
+# Requirement 20.2: Apply a default-deny-all-ingress NetworkPolicy
+# Requirement 20.7: Apply a default-deny-all-egress NetworkPolicy
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: auction-system
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: network-security
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-egress
+  namespace: auction-system
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: network-security
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress

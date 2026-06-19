@@ -20,6 +20,7 @@ import (
 	"github.com/auction-system/user-service/internal/middleware"
 	"github.com/auction-system/user-service/internal/model"
 	"github.com/auction-system/user-service/internal/observability"
+	"github.com/auction-system/user-service/internal/pkginit"
 	"github.com/auction-system/user-service/internal/redis"
 	"github.com/auction-system/user-service/internal/repository"
 	"github.com/auction-system/user-service/internal/service"
@@ -68,6 +69,20 @@ func main() {
 	if len(cfg.Kafka.Brokers) > 0 && cfg.Kafka.Brokers[0] != "" {
 		kafkaPkg.InitProducer(kafkaPkg.ProducerConfig{Brokers: cfg.Kafka.Brokers, Topic: cfg.Kafka.Topic})
 		defer func() { _ = kafkaPkg.Close() }()
+	}
+
+	// ── Shared packages (structured logger, circuit breakers, validation) ──
+	sharedSvc, sharedErr := pkginit.Init(pkginit.Config{
+		Environment:  cfg.App.Env,
+		KafkaBrokers: cfg.Kafka.Brokers,
+		KafkaTopic:   cfg.Kafka.Topic,
+	})
+	if sharedErr != nil {
+		log.Warn("shared packages init failed — continuing with local implementations", zap.Error(sharedErr))
+	} else {
+		defer sharedSvc.Close()
+		sharedSvc.Logger.Info("shared packages ready for user-service")
+		_ = sharedSvc
 	}
 
 	go refreshSessionGauge(repository.NewSessionRepository())

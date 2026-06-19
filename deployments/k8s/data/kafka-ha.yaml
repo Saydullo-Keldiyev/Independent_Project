@@ -1,0 +1,648 @@
+# Kafka HA Cluster — 3 brokers across 2+ availability zones
+# Requirements: 17.6 - Replication factor 3, min.insync.replicas 2, across 2+ AZs
+#
+# This configuration provides:
+#   - 3 Kafka brokers distributed across availability zones
+#   - Replication factor 3 for all topics
+#   - min.insync.replicas = 2 (tolerate 1 broker failure without data loss)
+#   - Rack-awareness enabled for cross-AZ replica placement
+#   - 3-node ZooKeeper ensemble for metadata HA
+#
+# Topology:
+#   AZ-1: kafka-0, zookeeper-0
+#   AZ-2: kafka-1, zookeeper-1
+#   AZ-3: kafka-2, zookeeper-2
+---
+# ZooKeeper ensemble — 3 nodes across AZs
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: zookeeper
+  namespace: auction-system
+  labels:
+    app: zookeeper
+    component: kafka-metadata
+    part-of: auction-system
+spec:
+  serviceName: zookeeper-headless
+  replicas: 3
+  podManagementPolicy: Parallel
+
+  selector:
+    matchLabels:
+      app: zookeeper
+
+  template:
+    metadata:
+      labels:
+        app: zookeeper
+        component: kafka-metadata
+    spec:
+      # Spread ZooKeeper nodes across AZs
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: zookeeper
+
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: zookeeper
+              topologyKey: kubernetes.io/hostname
+
+      securityContext:
+        runAsUser: 1000
+        fsGroup: 1000
+
+      containers:
+        - name: zookeeper
+          image: confluentinc/cp-zookeeper:7.5.0
+          ports:
+            - name: client
+              containerPort: 2181
+            - name: follower
+              containerPort: 2888
+            - name: election
+              containerPort: 3888
+          env:
+            - name: ZOOKEEPER_CLIENT_PORT
+              value: "2181"
+            - name: ZOOKEEPER_TICK_TIME
+              value: "2000"
+            - name: ZOOKEEPER_INIT_LIMIT
+              value: "10"
+            - name: ZOOKEEPER_SYNC_LIMIT
+              value: "5"
+            - name: ZOOKEEPER_SERVERS
+              value: "zookeeper-0.zookeeper-headless.auction-system.svc.cluster.local:2888:3888;zookeeper-1.zookeeper-headless.auction-system.svc.cluster.local:2888:3888;zookeeper-2.zookeeper-headless.auction-system.svc.cluster.local:2888:3888"
+            - name: ZOOKEEPER_SERVER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          command:
+            - bash
+            - -c
+            - |
+              # Extract ordinal index from pod name for server.id
+              export ZOOKEEPER_SERVER_ID=$((${HOSTNAME##*-} + 1))
+              echo "${ZOOKEEPER_SERVER_ID}" > /var/lib/zookeeper/data/myid
+              exec /etc/confluent/docker/run
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "512Mi"
+            limits:
+              cpu: "500m"
+              memory: "1Gi"
+          readinessProbe:
+            exec:
+              command:
+                - bash
+                - -c
+                - echo ruok | nc localhost 2181 | grep imok
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            exec:
+              command:
+                - bash
+                - -c
+                - echo ruok | nc localhost 2181 | grep imok
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            failureThreshold: 5
+          volumeMounts:
+            - name: zookeeper-data
+              mountPath: /var/lib/zookeeper/data
+            - name: zookeeper-log
+              mountPath: /var/lib/zookeeper/log
+
+  volumeClaimTemplates:
+    - metadata:
+        name: zookeeper-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: fast-ssd
+        resources:
+          requests:
+            storage: 10Gi
+    - metadata:
+        name: zookeeper-log
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: fast-ssd
+        resources:
+          requests:
+            storage: 10Gi
+
+---
+# ZooKeeper headless service
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper-headless
+  namespace: auction-system
+  labels:
+    app: zookeeper
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: zookeeper
+  ports:
+    - name: client
+      port: 2181
+    - name: follower
+      port: 2888
+    - name: election
+      port: 3888
+
+---
+# ZooKeeper client service
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper
+  namespace: auction-system
+  labels:
+    app: zookeeper
+spec:
+  type: ClusterIP
+  selector:
+    app: zookeeper
+  ports:
+    - name: client
+      port: 2181
+
+---
+# ZooKeeper PDB
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: zookeeper-pdb
+  namespace: auction-system
+  labels:
+    app: zookeeper
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: zookeeper
+
+---
+# Kafka 3-broker StatefulSet with rack-awareness for cross-AZ replication
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: auction-system
+  labels:
+    app: kafka
+    component: messaging
+    part-of: auction-system
+spec:
+  serviceName: kafka-headless
+  replicas: 3
+  podManagementPolicy: Parallel
+
+  selector:
+    matchLabels:
+      app: kafka
+
+  template:
+    metadata:
+      labels:
+        app: kafka
+        component: messaging
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9404"
+    spec:
+      # Spread Kafka brokers across AZs
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: kafka
+
+      # Never schedule 2 brokers on same node
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: kafka
+              topologyKey: kubernetes.io/hostname
+
+      securityContext:
+        runAsUser: 1000
+        fsGroup: 1000
+
+      # Init container to determine broker.rack from node topology label
+      initContainers:
+        - name: init-rack
+          image: bitnami/kubectl:1.28
+          command:
+            - bash
+            - -c
+            - |
+              # Get the AZ of the node this pod is scheduled on
+              NODE_NAME=$(cat /etc/hostname-info/nodename)
+              AZ=$(kubectl get node ${NODE_NAME} -o jsonpath='{.metadata.labels.topology\.kubernetes\.io/zone}')
+              echo "${AZ}" > /shared/rack-id
+              echo "Kafka broker.rack set to: ${AZ}"
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: shared-config
+              mountPath: /shared
+            - name: hostname-info
+              mountPath: /etc/hostname-info
+
+      containers:
+        - name: kafka
+          image: confluentinc/cp-kafka:7.5.0
+          ports:
+            - name: kafka
+              containerPort: 9092
+            - name: kafka-internal
+              containerPort: 9093
+            - name: jmx
+              containerPort: 9404
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: KAFKA_ZOOKEEPER_CONNECT
+              value: "zookeeper-0.zookeeper-headless.auction-system.svc.cluster.local:2181,zookeeper-1.zookeeper-headless.auction-system.svc.cluster.local:2181,zookeeper-2.zookeeper-headless.auction-system.svc.cluster.local:2181"
+            # Listeners
+            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+              value: "INTERNAL:PLAINTEXT,REPLICATION:PLAINTEXT"
+            - name: KAFKA_INTER_BROKER_LISTENER_NAME
+              value: "REPLICATION"
+            - name: KAFKA_LISTENERS
+              value: "INTERNAL://0.0.0.0:9092,REPLICATION://0.0.0.0:9093"
+            - name: KAFKA_ADVERTISED_LISTENERS
+              value: "INTERNAL://$(POD_NAME).kafka-headless.$(POD_NAMESPACE).svc.cluster.local:9092,REPLICATION://$(POD_NAME).kafka-headless.$(POD_NAMESPACE).svc.cluster.local:9093"
+            # Replication settings — Requirement 17.6
+            - name: KAFKA_DEFAULT_REPLICATION_FACTOR
+              value: "3"
+            - name: KAFKA_MIN_INSYNC_REPLICAS
+              value: "2"
+            - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+              value: "3"
+            - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+              value: "3"
+            - name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR
+              value: "2"
+            # Rack awareness — ensures replicas spread across AZs
+            - name: KAFKA_BROKER_RACK
+              value: "will-be-overridden"
+            # Durability settings
+            - name: KAFKA_UNCLEAN_LEADER_ELECTION_ENABLE
+              value: "false"
+            - name: KAFKA_AUTO_CREATE_TOPICS_ENABLE
+              value: "false"
+            - name: KAFKA_DELETE_TOPIC_ENABLE
+              value: "true"
+            # Retention
+            - name: KAFKA_LOG_RETENTION_HOURS
+              value: "168"  # 7 days
+            - name: KAFKA_LOG_RETENTION_BYTES
+              value: "10737418240"  # 10 GB per partition
+            - name: KAFKA_LOG_SEGMENT_BYTES
+              value: "1073741824"  # 1 GB segments
+            # Performance
+            - name: KAFKA_NUM_PARTITIONS
+              value: "6"
+            - name: KAFKA_NUM_RECOVERY_THREADS_PER_DATA_DIR
+              value: "2"
+            - name: KAFKA_NUM_REPLICA_FETCHERS
+              value: "2"
+            # JMX for monitoring
+            - name: KAFKA_JMX_PORT
+              value: "9999"
+            - name: KAFKA_JMX_OPTS
+              value: "-Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.port=9999 -Dcom.sun.management.jmxremote.rmi.port=9999 -Djava.rmi.server.hostname=127.0.0.1"
+          command:
+            - bash
+            - -c
+            - |
+              # Set broker.id from ordinal
+              export KAFKA_BROKER_ID=${HOSTNAME##*-}
+              # Set rack from init container
+              if [ -f /shared/rack-id ]; then
+                export KAFKA_BROKER_RACK=$(cat /shared/rack-id)
+              fi
+              exec /etc/confluent/docker/run
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2000m"
+              memory: "4Gi"
+          readinessProbe:
+            exec:
+              command:
+                - bash
+                - -c
+                - kafka-broker-api-versions --bootstrap-server localhost:9092 > /dev/null 2>&1
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 5
+            timeoutSeconds: 10
+          livenessProbe:
+            exec:
+              command:
+                - bash
+                - -c
+                - kafka-broker-api-versions --bootstrap-server localhost:9092 > /dev/null 2>&1
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 3
+            timeoutSeconds: 10
+          volumeMounts:
+            - name: kafka-data
+              mountPath: /var/lib/kafka/data
+            - name: shared-config
+              mountPath: /shared
+
+        # JMX Exporter sidecar for Prometheus metrics
+        - name: jmx-exporter
+          image: bitnami/jmx-exporter:0.20.0
+          ports:
+            - name: metrics
+              containerPort: 9404
+          command:
+            - java
+            - -jar
+            - /opt/bitnami/jmx-exporter/jmx_prometheus_httpserver.jar
+            - "9404"
+            - /config/kafka-jmx.yaml
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+          volumeMounts:
+            - name: jmx-config
+              mountPath: /config
+
+      volumes:
+        - name: shared-config
+          emptyDir: {}
+        - name: hostname-info
+          downwardAPI:
+            items:
+              - path: nodename
+                fieldRef:
+                  fieldPath: spec.nodeName
+        - name: jmx-config
+          configMap:
+            name: kafka-jmx-config
+
+  volumeClaimTemplates:
+    - metadata:
+        name: kafka-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: fast-ssd
+        resources:
+          requests:
+            storage: 100Gi
+
+---
+# Kafka headless service for broker-to-broker communication
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-headless
+  namespace: auction-system
+  labels:
+    app: kafka
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: kafka
+  ports:
+    - name: kafka
+      port: 9092
+    - name: kafka-internal
+      port: 9093
+
+---
+# Kafka bootstrap service for application access
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-bootstrap
+  namespace: auction-system
+  labels:
+    app: kafka
+spec:
+  type: ClusterIP
+  selector:
+    app: kafka
+  ports:
+    - name: kafka
+      port: 9092
+      targetPort: 9092
+
+---
+# Kafka PDB — always keep at least 2 of 3 brokers running
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: kafka-pdb
+  namespace: auction-system
+  labels:
+    app: kafka
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: kafka
+
+---
+# JMX Exporter configuration for Kafka metrics
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-jmx-config
+  namespace: auction-system
+  labels:
+    app: kafka
+data:
+  kafka-jmx.yaml: |
+    hostPort: 127.0.0.1:9999
+    lowercaseOutputName: true
+    lowercaseOutputLabelNames: true
+    rules:
+      # Broker metrics
+      - pattern: kafka.server<type=ReplicaManager, name=UnderReplicatedPartitions><>Value
+        name: kafka_server_replica_manager_under_replicated_partitions
+        type: GAUGE
+
+      - pattern: kafka.server<type=ReplicaManager, name=PartitionCount><>Value
+        name: kafka_server_replica_manager_partition_count
+        type: GAUGE
+
+      - pattern: kafka.server<type=ReplicaManager, name=LeaderCount><>Value
+        name: kafka_server_replica_manager_leader_count
+        type: GAUGE
+
+      # ISR metrics
+      - pattern: kafka.server<type=ReplicaManager, name=IsrShrinksPerSec><>Count
+        name: kafka_server_replica_manager_isr_shrinks_total
+        type: COUNTER
+
+      - pattern: kafka.server<type=ReplicaManager, name=IsrExpandsPerSec><>Count
+        name: kafka_server_replica_manager_isr_expands_total
+        type: COUNTER
+
+      # Request metrics
+      - pattern: kafka.network<type=RequestMetrics, name=RequestsPerSec, request=(.+), version=(.+)><>Count
+        name: kafka_network_request_metrics_requests_total
+        type: COUNTER
+        labels:
+          request: "$1"
+          version: "$2"
+
+      # Topic metrics
+      - pattern: kafka.server<type=BrokerTopicMetrics, name=MessagesInPerSec, topic=(.+)><>Count
+        name: kafka_server_broker_topic_metrics_messages_in_total
+        type: COUNTER
+        labels:
+          topic: "$1"
+
+      - pattern: kafka.server<type=BrokerTopicMetrics, name=BytesInPerSec, topic=(.+)><>Count
+        name: kafka_server_broker_topic_metrics_bytes_in_total
+        type: COUNTER
+        labels:
+          topic: "$1"
+
+      - pattern: kafka.server<type=BrokerTopicMetrics, name=BytesOutPerSec, topic=(.+)><>Count
+        name: kafka_server_broker_topic_metrics_bytes_out_total
+        type: COUNTER
+        labels:
+          topic: "$1"
+
+      # Consumer group lag
+      - pattern: kafka.server<type=FetcherLagMetrics, name=ConsumerLag, clientId=(.+), topic=(.+), partition=(.+)><>Value
+        name: kafka_server_fetcher_lag_metrics_consumer_lag
+        type: GAUGE
+        labels:
+          client_id: "$1"
+          topic: "$2"
+          partition: "$3"
+
+      # Log size
+      - pattern: kafka.log<type=Log, name=Size, topic=(.+), partition=(.+)><>Value
+        name: kafka_log_size_bytes
+        type: GAUGE
+        labels:
+          topic: "$1"
+          partition: "$2"
+
+---
+# Topic configuration Job — creates required topics with proper replication
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-topic-init
+  namespace: auction-system
+  labels:
+    app: kafka
+    component: init
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 5
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: topic-init
+          image: confluentinc/cp-kafka:7.5.0
+          command:
+            - bash
+            - -c
+            - |
+              set -e
+
+              BOOTSTRAP="kafka-0.kafka-headless.auction-system.svc.cluster.local:9092"
+
+              # Wait for Kafka to be ready
+              echo "Waiting for Kafka cluster..."
+              until kafka-broker-api-versions --bootstrap-server ${BOOTSTRAP} > /dev/null 2>&1; do
+                echo "Waiting for brokers..."
+                sleep 5
+              done
+              echo "Kafka cluster is ready"
+
+              # Create topics with replication factor 3 and min.insync.replicas 2
+              TOPICS=(
+                "auction.events:6:3"
+                "bid.events:6:3"
+                "payment.events:6:3"
+                "notification.events:6:3"
+                "user.events:6:3"
+                "settlement.events:6:3"
+                "auction.events.dlq:3:3"
+                "bid.events.dlq:3:3"
+                "payment.events.dlq:3:3"
+                "notification.events.dlq:3:3"
+              )
+
+              for TOPIC_CONFIG in "${TOPICS[@]}"; do
+                IFS=':' read -r TOPIC PARTITIONS REPLICATION <<< "${TOPIC_CONFIG}"
+                echo "Creating topic: ${TOPIC} (partitions=${PARTITIONS}, replication=${REPLICATION})"
+                kafka-topics --bootstrap-server ${BOOTSTRAP} \
+                  --create --if-not-exists \
+                  --topic "${TOPIC}" \
+                  --partitions "${PARTITIONS}" \
+                  --replication-factor "${REPLICATION}" \
+                  --config min.insync.replicas=2 \
+                  --config retention.ms=604800000 \
+                  --config cleanup.policy=delete
+              done
+
+              echo "All topics created successfully"
+              kafka-topics --bootstrap-server ${BOOTSTRAP} --list
+
+---
+# ServiceMonitor for Prometheus Operator
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: kafka-monitor
+  namespace: auction-system
+  labels:
+    app: kafka
+spec:
+  selector:
+    matchLabels:
+      app: kafka
+  endpoints:
+    - port: metrics
+      interval: 15s
+      path: /metrics

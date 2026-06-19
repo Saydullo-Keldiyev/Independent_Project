@@ -11,7 +11,7 @@ metadata:
     prometheus.io/port:   "8082"
     prometheus.io/path:   "/metrics"
 spec:
-  replicas: 3
+  replicas: 2
 
   strategy:
     type: RollingUpdate
@@ -34,6 +34,13 @@ spec:
         prometheus.io/path:   "/metrics"
     spec:
       terminationGracePeriodSeconds: 60  # longer for WebSocket drain
+
+      # Pod-level security context for PSS restricted compliance
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+        fsGroup: 10000
 
       # Multi-zone spread
       topologySpreadConstraints:
@@ -119,16 +126,26 @@ spec:
 
           securityContext:
             runAsNonRoot: true
-            runAsUser: 1000
+            runAsUser: 10000
+            runAsGroup: 10000
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
 
           # Graceful shutdown hook — drain WebSocket connections
           lifecycle:
             preStop:
               exec:
                 command: ["/bin/sh", "-c", "sleep 10"]
+
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
 
       serviceAccountName: auction-service-account

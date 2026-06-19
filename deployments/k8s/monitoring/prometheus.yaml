@@ -18,6 +18,19 @@ data:
         cluster: auction-system
         env: production
 
+    # Alertmanager configuration
+    # Requirement 6.4: Deliver notifications within 30s of alert firing
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets:
+                - alertmanager:9093
+          timeout: 10s
+
+    # Load alerting rules from mounted ConfigMap
+    rule_files:
+      - "/etc/prometheus/rules/*.yml"
+
     scrape_configs:
       - job_name: kubernetes-pods
         kubernetes_sd_configs:
@@ -81,12 +94,17 @@ spec:
           volumeMounts:
             - name: config
               mountPath: /etc/prometheus
+            - name: rules
+              mountPath: /etc/prometheus/rules
             - name: data
               mountPath: /prometheus
       volumes:
         - name: config
           configMap:
             name: prometheus-config
+        - name: rules
+          configMap:
+            name: prometheus-alert-rules
         - name: data
           emptyDir: {}
 ---

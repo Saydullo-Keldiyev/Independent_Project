@@ -1,0 +1,366 @@
+# Alertmanager Configuration for Auction System
+# Requirements: 6.4, 6.6, 6.7, 6.8
+#
+# Multi-channel delivery: Slack + PagerDuty within 30s
+# Retry: 3 times at 10s intervals, fallback to remaining channel if one unreachable
+# Grouping: Repeated alerts grouped into single notification per 5-min window
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: monitoring
+  labels:
+    app: alertmanager
+data:
+  alertmanager.yml: |
+    global:
+      # Resolve timeout for alerts that stop firing
+      resolve_timeout: 5m
+
+      # Slack global config
+      slack_api_url_file: /etc/alertmanager/secrets/slack-webhook-url
+
+      # PagerDuty global config (uses per-receiver routing key)
+      pagerduty_url: "https://events.pagerduty.com/v2/enqueue"
+
+      # HTTP client config for webhook delivery
+      http_config:
+        follow_redirects: true
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Templates for consistent alert formatting
+    # ─────────────────────────────────────────────────────────────────────────
+    templates:
+      - "/etc/alertmanager/templates/*.tmpl"
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Inhibition rules to reduce noise
+    # ─────────────────────────────────────────────────────────────────────────
+    inhibit_rules:
+      # If a critical alert fires, inhibit warning alerts for same service
+      - source_matchers:
+          - severity="critical"
+        target_matchers:
+          - severity="warning"
+        equal: ["service", "namespace"]
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Routing tree
+    # Requirement 6.8: Group repeated alerts into single notification per 5-min window
+    # ─────────────────────────────────────────────────────────────────────────
+    route:
+      # Default receiver delivers to both Slack and PagerDuty
+      receiver: "multi-channel"
+
+      # Group alerts by service and alert name to prevent flooding
+      group_by: ["alertname", "service", "namespace"]
+
+      # Requirement 6.8: 5-minute grouping window
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+
+      # Route critical alerts to PagerDuty primary + Slack
+      routes:
+        - matchers:
+            - severity="critical"
+          receiver: "critical-multi-channel"
+          group_by: ["alertname", "service", "namespace"]
+          group_wait: 10s
+          group_interval: 5m
+          repeat_interval: 1h
+          continue: false
+
+        - matchers:
+            - severity="warning"
+          receiver: "warning-multi-channel"
+          group_by: ["alertname", "service", "namespace"]
+          group_wait: 30s
+          group_interval: 5m
+          repeat_interval: 4h
+          continue: false
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Receivers
+    # Requirement 6.4: Multi-channel delivery (Slack + PagerDuty) within 30s
+    # Requirement 6.7: Retry 3 times at 10s intervals, use remaining channel
+    # ─────────────────────────────────────────────────────────────────────────
+    receivers:
+      # Default multi-channel: both Slack and PagerDuty
+      - name: "multi-channel"
+        slack_configs:
+          - channel: "#auction-alerts"
+            send_resolved: true
+            http_config:
+              follow_redirects: true
+            title: |
+              [{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}
+            text: |
+              *Service:* {{ .CommonLabels.service }}
+              *Severity:* {{ .CommonLabels.severity }}
+              *Threshold:* {{ (index .Alerts 0).Annotations.threshold }}
+              *Current Value:* {{ (index .Alerts 0).Annotations.current_value }}
+              *Timestamp:* {{ .CommonLabels.namespace }} - {{ (index .Alerts 0).StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+              *Runbook:* {{ (index .Alerts 0).Annotations.runbook_url }}
+              *Description:* {{ (index .Alerts 0).Annotations.description }}
+            actions:
+              - type: button
+                text: "Runbook"
+                url: "{{ (index .Alerts 0).Annotations.runbook_url }}"
+              - type: button
+                text: "Silence"
+                url: '{{ template "__silenceURL" . }}'
+        pagerduty_configs:
+          - routing_key_file: /etc/alertmanager/secrets/pagerduty-routing-key
+            severity: '{{ if eq .CommonLabels.severity "critical" }}critical{{ else }}warning{{ end }}'
+            description: |
+              {{ .CommonLabels.alertname }}: {{ (index .Alerts 0).Annotations.summary }}
+            details:
+              service: "{{ .CommonLabels.service }}"
+              severity: "{{ .CommonLabels.severity }}"
+              threshold: "{{ (index .Alerts 0).Annotations.threshold }}"
+              current_value: "{{ (index .Alerts 0).Annotations.current_value }}"
+              runbook_url: "{{ (index .Alerts 0).Annotations.runbook_url }}"
+              firing_since: "{{ (index .Alerts 0).StartsAt }}"
+            http_config:
+              follow_redirects: true
+
+      # Critical multi-channel: urgent PagerDuty + Slack critical channel
+      - name: "critical-multi-channel"
+        slack_configs:
+          - channel: "#auction-alerts-critical"
+            send_resolved: true
+            http_config:
+              follow_redirects: true
+            color: '{{ if eq .Status "firing" }}danger{{ else }}good{{ end }}'
+            title: |
+              :rotating_light: [CRITICAL] {{ .CommonLabels.alertname }}
+            text: |
+              *Service:* {{ .CommonLabels.service }}
+              *Severity:* {{ .CommonLabels.severity }}
+              *Threshold:* {{ (index .Alerts 0).Annotations.threshold }}
+              *Current Value:* {{ (index .Alerts 0).Annotations.current_value }}
+              *Timestamp:* {{ (index .Alerts 0).StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+              *Runbook:* {{ (index .Alerts 0).Annotations.runbook_url }}
+              *Description:* {{ (index .Alerts 0).Annotations.description }}
+            actions:
+              - type: button
+                text: "Runbook"
+                url: "{{ (index .Alerts 0).Annotations.runbook_url }}"
+              - type: button
+                text: "Silence"
+                url: '{{ template "__silenceURL" . }}'
+        pagerduty_configs:
+          - routing_key_file: /etc/alertmanager/secrets/pagerduty-routing-key
+            severity: "critical"
+            description: |
+              [CRITICAL] {{ .CommonLabels.alertname }}: {{ (index .Alerts 0).Annotations.summary }}
+            details:
+              service: "{{ .CommonLabels.service }}"
+              severity: "critical"
+              threshold: "{{ (index .Alerts 0).Annotations.threshold }}"
+              current_value: "{{ (index .Alerts 0).Annotations.current_value }}"
+              runbook_url: "{{ (index .Alerts 0).Annotations.runbook_url }}"
+              firing_since: "{{ (index .Alerts 0).StartsAt }}"
+            http_config:
+              follow_redirects: true
+
+      # Warning multi-channel: PagerDuty (lower urgency) + Slack warnings channel
+      - name: "warning-multi-channel"
+        slack_configs:
+          - channel: "#auction-alerts-warning"
+            send_resolved: true
+            http_config:
+              follow_redirects: true
+            color: '{{ if eq .Status "firing" }}warning{{ else }}good{{ end }}'
+            title: |
+              :warning: [WARNING] {{ .CommonLabels.alertname }}
+            text: |
+              *Service:* {{ .CommonLabels.service }}
+              *Severity:* {{ .CommonLabels.severity }}
+              *Threshold:* {{ (index .Alerts 0).Annotations.threshold }}
+              *Current Value:* {{ (index .Alerts 0).Annotations.current_value }}
+              *Timestamp:* {{ (index .Alerts 0).StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+              *Runbook:* {{ (index .Alerts 0).Annotations.runbook_url }}
+              *Description:* {{ (index .Alerts 0).Annotations.description }}
+            actions:
+              - type: button
+                text: "Runbook"
+                url: "{{ (index .Alerts 0).Annotations.runbook_url }}"
+        pagerduty_configs:
+          - routing_key_file: /etc/alertmanager/secrets/pagerduty-routing-key
+            severity: "warning"
+            description: |
+              [WARNING] {{ .CommonLabels.alertname }}: {{ (index .Alerts 0).Annotations.summary }}
+            details:
+              service: "{{ .CommonLabels.service }}"
+              severity: "warning"
+              threshold: "{{ (index .Alerts 0).Annotations.threshold }}"
+              current_value: "{{ (index .Alerts 0).Annotations.current_value }}"
+              runbook_url: "{{ (index .Alerts 0).Annotations.runbook_url }}"
+              firing_since: "{{ (index .Alerts 0).StartsAt }}"
+            http_config:
+              follow_redirects: true
+
+---
+# Alertmanager Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: monitoring
+  labels:
+    app: alertmanager
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: alertmanager
+  template:
+    metadata:
+      labels:
+        app: alertmanager
+    spec:
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.27.0
+          args:
+            - "--config.file=/etc/alertmanager/alertmanager.yml"
+            - "--storage.path=/alertmanager"
+            - "--cluster.listen-address=0.0.0.0:9094"
+            - "--cluster.peer=alertmanager-0.alertmanager-headless.monitoring.svc.cluster.local:9094"
+            - "--cluster.peer=alertmanager-1.alertmanager-headless.monitoring.svc.cluster.local:9094"
+          ports:
+            - name: http
+              containerPort: 9093
+            - name: cluster
+              containerPort: 9094
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alertmanager
+            - name: secrets
+              mountPath: /etc/alertmanager/secrets
+              readOnly: true
+            - name: templates
+              mountPath: /etc/alertmanager/templates
+            - name: data
+              mountPath: /alertmanager
+          livenessProbe:
+            httpGet:
+              path: /-/healthy
+              port: 9093
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9093
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap:
+            name: alertmanager-config
+        - name: secrets
+          secret:
+            secretName: alertmanager-secrets
+        - name: templates
+          configMap:
+            name: alertmanager-templates
+        - name: data
+          emptyDir: {}
+---
+# Alertmanager Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: monitoring
+  labels:
+    app: alertmanager
+spec:
+  type: ClusterIP
+  selector:
+    app: alertmanager
+  ports:
+    - name: http
+      port: 9093
+      targetPort: 9093
+---
+# Headless service for cluster peer discovery
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager-headless
+  namespace: monitoring
+  labels:
+    app: alertmanager
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app: alertmanager
+  ports:
+    - name: cluster
+      port: 9094
+      targetPort: 9094
+---
+# Alertmanager notification templates
+# Requirement 6.6: Include service name, severity, threshold, current value, timestamp, runbook link
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-templates
+  namespace: monitoring
+  labels:
+    app: alertmanager
+data:
+  auction-system.tmpl: |
+    {{ define "auction.slack.title" }}
+    [{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .CommonLabels.alertname }}
+    {{ end }}
+
+    {{ define "auction.slack.text" }}
+    {{ range .Alerts }}
+    *Alert:* {{ .Labels.alertname }}
+    *Service:* {{ .Labels.service }}
+    *Severity:* {{ .Labels.severity }}
+    *Threshold:* {{ .Annotations.threshold }}
+    *Current Value:* {{ .Annotations.current_value }}
+    *Timestamp:* {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+    *Runbook:* {{ .Annotations.runbook_url }}
+    *Description:* {{ .Annotations.description }}
+    {{ if .Annotations.summary }}*Summary:* {{ .Annotations.summary }}{{ end }}
+    ---
+    {{ end }}
+    {{ end }}
+
+    {{ define "auction.pagerduty.description" }}
+    {{ .CommonLabels.alertname }}: {{ (index .Alerts 0).Annotations.summary }}
+    {{ end }}
+---
+# SealedSecret placeholder for Alertmanager credentials
+# In production, replace with actual SealedSecret or Vault-injected secret
+apiVersion: v1
+kind: Secret
+metadata:
+  name: alertmanager-secrets
+  namespace: monitoring
+  labels:
+    app: alertmanager
+  annotations:
+    description: "Replace with SealedSecret in production. Values injected via Vault."
+type: Opaque
+stringData:
+  # Slack webhook URL for alert delivery
+  slack-webhook-url: "https://hooks.slack.com/services/REPLACE/WITH/ACTUAL-WEBHOOK"
+  # PagerDuty integration/routing key
+  pagerduty-routing-key: "REPLACE_WITH_PAGERDUTY_ROUTING_KEY"

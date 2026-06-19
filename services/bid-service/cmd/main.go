@@ -18,6 +18,7 @@ import (
 	kafkaPkg "github.com/auction-system/bid-service/internal/kafka"
 	"github.com/auction-system/bid-service/internal/middleware"
 	"github.com/auction-system/bid-service/internal/observability"
+	"github.com/auction-system/bid-service/internal/pkginit"
 	redisPkg "github.com/auction-system/bid-service/internal/redis"
 	"github.com/auction-system/bid-service/internal/utils"
 	walletPkg "github.com/auction-system/bid-service/internal/wallet"
@@ -83,6 +84,21 @@ func main() {
 		Topic:   cfg.Kafka.Topic,
 	})
 	defer kafkaPkg.Close()
+
+	// ── 6.1 Init shared packages (logger, lock, circuit breakers, validation) ─
+	sharedSvc, sharedErr := pkginit.Init(pkginit.Config{
+		Environment:  cfg.App.Env,
+		RedisClient:  redisPkg.Client,
+		KafkaBrokers: cfg.Kafka.Brokers,
+		KafkaTopic:   cfg.Kafka.Topic,
+	})
+	if sharedErr != nil {
+		log.Warn("shared packages init failed — continuing with local implementations", zap.Error(sharedErr))
+	} else {
+		defer sharedSvc.Close()
+		sharedSvc.Logger.Info("shared packages ready for bid-service")
+		_ = sharedSvc // LockManager available for auction lock acquisition.
+	}
 
 	// ── 6.5. Init wallet client (user-service integration) ────────────────
 	if cfg.UserServiceURL != "" {

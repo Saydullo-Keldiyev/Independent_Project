@@ -19,6 +19,6 @@ jobs:
       service-path:       services/notification-service
       dockerfile:         deployments/docker/notification.Dockerfile
       go-version:         "1.22"
-      coverage-threshold: "60"
+      coverage-threshold: "80"
     secrets:
       REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}

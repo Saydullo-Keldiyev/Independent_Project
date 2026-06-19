@@ -1,3 +1,3 @@
 module github.com/auction-system/tests/unit/bid
 
-go 1.22
+go 1.23

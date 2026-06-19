@@ -34,6 +34,17 @@ jobs:
           go mod download
           go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
+      - name: Enforce 80% coverage gate — ${{ matrix.service }}
+        working-directory: ${{ matrix.service }}
+        run: |
+          COVERAGE=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | tr -d '%')
+          echo "Coverage for ${{ matrix.service }}: ${COVERAGE}%"
+          if (( $(echo "$COVERAGE < 80" | bc -l) )); then
+            echo "❌ Coverage ${COVERAGE}% is below 80% threshold for ${{ matrix.service }}"
+            exit 1
+          fi
+          echo "✅ Coverage ${COVERAGE}% passes 80% threshold"
+
       - name: Upload coverage
         uses: codecov/codecov-action@v4
         with:
@@ -41,11 +52,47 @@ jobs:
           flags: ${{ matrix.service }}
         continue-on-error: true
 
+  # ── Property-Based Tests (rapid, 100+ iterations) ─────────────────────────────
+  property-tests:
+    name: Property-Based Tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package:
+          - pkg/lock
+          - pkg/circuitbreaker
+          - pkg/logger
+          - pkg/kafka
+          - pkg/ratelimit
+          - pkg/validation
+          - api-gateway
+          - services/payment-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache-dependency-path: ${{ matrix.package }}/go.sum
+
+      - name: Run property-based tests — ${{ matrix.package }}
+        working-directory: ${{ matrix.package }}
+        run: |
+          go mod download
+          # Find and run property-based tests with rapid (100+ iterations)
+          PROP_FILES=$(grep -rl "rapid\." --include="*_test.go" . || true)
+          if [ -n "$PROP_FILES" ]; then
+            echo "Found property tests in: $PROP_FILES"
+            go test -race -run "Property|Prop" -count=1 -timeout=300s -rapid.checks=100 ./...
+          else
+            echo "ℹ️  No property-based tests found in ${{ matrix.package }}, skipping."
+          fi
+
   # ── Integration Tests ────────────────────────────────────────────────────────
   integration-tests:
     name: Integration Tests
     runs-on: ubuntu-latest
-    needs: unit-tests
+    needs: [unit-tests, property-tests]
     services:
       postgres:
         image: postgres:16-alpine

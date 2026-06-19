@@ -12,6 +12,7 @@ import (
 	"github.com/auction-system/api-gateway/internal/config"
 	"github.com/auction-system/api-gateway/internal/discovery"
 	"github.com/auction-system/api-gateway/internal/middleware"
+	"github.com/auction-system/api-gateway/internal/observability"
 	"github.com/auction-system/api-gateway/internal/proxy"
 )
 
@@ -30,14 +31,17 @@ func Setup(cfg *config.Config, redisClient *redis.Client) *gin.Engine {
 		cfg.Services.NotificationServiceURL,
 	)
 	gw := proxy.NewGateway(reg, cfg.Proxy.Timeout, cfg.Proxy.Retries)
-	rl := middleware.NewRateLimiter(redisClient, cfg.RateLimit.PerMinute)
+
+	// Sliding window rate limiter with IP blocking, endpoint-specific limits,
+	// and automatic fallback to in-memory when Redis is unavailable.
+	slidingRL := middleware.NewSlidingWindowRateLimiter(redisClient, observability.Log)
 
 	r.Use(middleware.Recovery())
 	r.Use(middleware.CorrelationID())
 	r.Use(middleware.AccessLog())
 	r.Use(middleware.SecurityHeaders(cfg.App.Env != "production"))
 	r.Use(middleware.CORSMiddleware(cfg.CORS.AllowedOrigins))
-	r.Use(rl.Middleware("ip"))
+	r.Use(slidingRL.Middleware())
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "service": "api-gateway"})
@@ -98,7 +102,6 @@ func Setup(cfg *config.Config, redisClient *redis.Client) *gin.Engine {
 	// ── Authenticated routes ─────────────────────────────────────────────────
 	authed := v1.Group("")
 	authed.Use(middleware.Auth(jwtVal))
-	authed.Use(rl.Middleware("user"))
 	{
 		// User service
 		authed.POST("/auth/logout", gw.Handler(discovery.UserService))
@@ -116,7 +119,6 @@ func Setup(cfg *config.Config, redisClient *redis.Client) *gin.Engine {
 	// WebSocket — bid service (JWT required)
 	ws := v1.Group("")
 	ws.Use(middleware.Auth(jwtVal))
-	ws.Use(rl.Middleware("user"))
 	{
 		ws.GET("/ws/:auction_id", gw.WebSocketHandler(discovery.BidService))
 	}
@@ -125,7 +127,6 @@ func Setup(cfg *config.Config, redisClient *redis.Client) *gin.Engine {
 	seller := v1.Group("")
 	seller.Use(middleware.Auth(jwtVal))
 	seller.Use(middleware.RequireSellerOrAdmin())
-	seller.Use(rl.Middleware("user"))
 	{
 		seller.POST("/auctions", gw.Handler(discovery.AuctionService))
 		seller.PUT("/auctions/:id", gw.Handler(discovery.AuctionService))

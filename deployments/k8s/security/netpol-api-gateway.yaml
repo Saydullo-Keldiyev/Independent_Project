@@ -1,0 +1,127 @@
+# NetworkPolicy for api-gateway
+# Requirement 20.1: Restrict pod-to-pod communication to declared dependencies
+# Requirement 20.2: Explicit ingress allow rules
+# Requirement 20.7: Explicit egress allow rules
+#
+# Ingress: from Istio ingress gateway (external traffic)
+# Egress: to bid-service, user-service, auction-service, notification-service,
+#          payment-service, search-service, Redis, Kafka, Prometheus
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-gateway-ingress
+  namespace: auction-system
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: network-security
+spec:
+  podSelector:
+    matchLabels:
+      app: api-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow traffic from Istio ingress gateway
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: istio-system
+      ports:
+        - protocol: TCP
+          port: 8080
+    # Allow Prometheus scraping
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8080
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-gateway-egress
+  namespace: auction-system
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: network-security
+spec:
+  podSelector:
+    matchLabels:
+      app: api-gateway
+  policyTypes:
+    - Egress
+  egress:
+    # To bid-service
+    - to:
+        - podSelector:
+            matchLabels:
+              app: bid-service
+      ports:
+        - protocol: TCP
+          port: 8082
+    # To user-service
+    - to:
+        - podSelector:
+            matchLabels:
+              app: user-service
+      ports:
+        - protocol: TCP
+          port: 8081
+    # To auction-service
+    - to:
+        - podSelector:
+            matchLabels:
+              app: auction-service
+      ports:
+        - protocol: TCP
+          port: 8083
+    # To notification-service
+    - to:
+        - podSelector:
+            matchLabels:
+              app: notification-service
+      ports:
+        - protocol: TCP
+          port: 8084
+    # To payment-service
+    - to:
+        - podSelector:
+            matchLabels:
+              app: payment-service
+      ports:
+        - protocol: TCP
+          port: 8085
+    # To search-service
+    - to:
+        - podSelector:
+            matchLabels:
+              app: search-service
+      ports:
+        - protocol: TCP
+          port: 8086
+    # To Redis (rate limiting, caching)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: auction-system
+          podSelector:
+            matchLabels:
+              app: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    # To Kafka (event publishing)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: auction-system
+          podSelector:
+            matchLabels:
+              app: kafka
+      ports:
+        - protocol: TCP
+          port: 9092

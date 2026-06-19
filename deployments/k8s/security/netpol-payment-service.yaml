@@ -1,0 +1,86 @@
+# NetworkPolicy for payment-service
+# Requirement 20.1: api-gateway to payment-service (via design architecture)
+# Requirement 20.2: Explicit ingress allow rules
+# Requirement 20.7: Explicit egress allow rules
+#
+# Ingress: from api-gateway, from bid-service (fund holds)
+# Egress: to PostgreSQL, Kafka (outbox pattern)
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-payment-service-ingress
+  namespace: auction-system
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: network-security
+spec:
+  podSelector:
+    matchLabels:
+      app: payment-service
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow traffic from api-gateway
+    - from:
+        - podSelector:
+            matchLabels:
+              app: api-gateway
+      ports:
+        - protocol: TCP
+          port: 8085
+    # Allow traffic from bid-service (fund hold requests)
+    - from:
+        - podSelector:
+            matchLabels:
+              app: bid-service
+      ports:
+        - protocol: TCP
+          port: 8085
+    # Allow Prometheus scraping
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8085
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-payment-service-egress
+  namespace: auction-system
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: network-security
+spec:
+  podSelector:
+    matchLabels:
+      app: payment-service
+  policyTypes:
+    - Egress
+  egress:
+    # To PostgreSQL (wallet transactions, saga state)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: auction-system
+          podSelector:
+            matchLabels:
+              app: postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+    # To Kafka (outbox pattern event publishing)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: auction-system
+          podSelector:
+            matchLabels:
+              app: kafka
+      ports:
+        - protocol: TCP
+          port: 9092

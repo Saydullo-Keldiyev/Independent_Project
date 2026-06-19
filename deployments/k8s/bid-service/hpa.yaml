@@ -9,7 +9,7 @@ spec:
     kind: Deployment
     name: bid-service
 
-  minReplicas: 3
+  minReplicas: 2
   maxReplicas: 20   # bid-service handles the most load — allow aggressive scaling
 
   metrics:

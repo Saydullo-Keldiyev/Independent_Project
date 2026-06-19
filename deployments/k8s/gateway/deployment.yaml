@@ -12,7 +12,7 @@ metadata:
     prometheus.io/port:   "8080"
     prometheus.io/path:   "/metrics"
 spec:
-  replicas: 3
+  replicas: 2
 
   # Rolling update — zero downtime deploys
   strategy:
@@ -37,6 +37,13 @@ spec:
     spec:
       # Graceful shutdown — wait for in-flight requests
       terminationGracePeriodSeconds: 30
+
+      # Pod-level security context for PSS restricted compliance
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+        fsGroup: 10000
 
       # Spread pods across availability zones for HA
       topologySpreadConstraints:
@@ -121,14 +128,30 @@ spec:
             failureThreshold: 30
             periodSeconds: 2
 
-          # Security context — run as non-root
+          # Security context — run as non-root (PSS restricted)
           securityContext:
             runAsNonRoot: true
-            runAsUser: 1000
+            runAsUser: 10000
+            runAsGroup: 10000
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
+          # preStop hook — allow load balancer deregistration
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
+
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
 
       # Service account (least privilege)
       serviceAccountName: auction-service-account

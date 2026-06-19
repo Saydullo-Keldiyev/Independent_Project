@@ -1,0 +1,586 @@
+openapi: 3.0.3
+info:
+  title: User Service API
+  description: |
+    Handles user registration, authentication, profile management, and session control.
+
+    ## API Versioning
+    - Current versions: v1
+    - Version prefix: /api/v1
+    - Backward compatibility guaranteed within major version for 6 months minimum
+    - Deprecated versions include `Deprecation` header with sunset date (RFC 7231)
+    - After sunset date, endpoints return HTTP 410
+
+    ## Deprecation Policy
+    - Deprecated endpoints are announced 90+ days before removal
+    - CHANGELOG.md documents all additions, deprecations, and breaking changes
+  version: 1.0.0
+  contact:
+    name: Platform Team
+    email: platform@auction.com
+  license:
+    name: Internal
+    url: https://docs.auction-system/license
+
+servers:
+  - url: http://localhost:8081
+    description: Local Development (Direct)
+  - url: http://localhost:8080
+    description: Local Development (via API Gateway)
+  - url: https://api.auction.com
+    description: Production
+
+tags:
+  - name: Auth
+    description: Authentication and authorization
+  - name: Sessions
+    description: Session management
+  - name: Users
+    description: User profile management
+  - name: Health
+    description: Service health endpoints
+
+paths:
+  /api/v1/auth/register:
+    post:
+      tags: [Auth]
+      operationId: registerUser
+      summary: Register a new user
+      description: Creates a new user account with the provided credentials.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Email or username already exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          description: Request payload too large (>1MB)
+        '429':
+          description: Rate limit exceeded (3 req/min)
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+              description: Seconds until rate limit resets
+
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      operationId: loginUser
+      summary: Login with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Rate limit exceeded (5 req/min)
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+
+  /api/v1/auth/refresh:
+    post:
+      tags: [Auth]
+      operationId: refreshToken
+      summary: Refresh access token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        '200':
+          description: New token pair
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          description: Invalid or expired refresh token
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logoutUser
+      summary: Logout and revoke current token
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Logged out successfully
+        '401':
+          description: Unauthorized
+
+  /api/v1/auth/forgot-password:
+    post:
+      tags: [Auth]
+      operationId: forgotPassword
+      summary: Request password reset email
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '200':
+          description: Reset email sent (always returns 200 regardless of email existence)
+
+  /api/v1/auth/reset-password:
+    post:
+      tags: [Auth]
+      operationId: resetPassword
+      summary: Reset password with token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, new_password]
+              properties:
+                token:
+                  type: string
+                new_password:
+                  type: string
+                  minLength: 8
+      responses:
+        '200':
+          description: Password reset successful
+        '400':
+          description: Invalid or expired token
+
+  /api/v1/auth/verify-email:
+    post:
+      tags: [Auth]
+      operationId: verifyEmail
+      summary: Verify email address with token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+      responses:
+        '200':
+          description: Email verified
+        '400':
+          description: Invalid or expired verification token
+
+  /api/v1/auth/change-password:
+    post:
+      tags: [Auth]
+      operationId: changePassword
+      summary: Change password (authenticated)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [old_password, new_password]
+              properties:
+                old_password:
+                  type: string
+                new_password:
+                  type: string
+                  minLength: 8
+      responses:
+        '200':
+          description: Password changed
+        '400':
+          description: Old password incorrect
+        '401':
+          description: Unauthorized
+
+  /api/v1/sessions:
+    get:
+      tags: [Sessions]
+      operationId: listSessions
+      summary: List active sessions
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Active sessions list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionListResponse'
+    delete:
+      tags: [Sessions]
+      operationId: revokeAllSessions
+      summary: Revoke all sessions
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: All sessions revoked
+
+  /api/v1/sessions/{id}:
+    delete:
+      tags: [Sessions]
+      operationId: revokeSession
+      summary: Revoke a specific session
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Session revoked
+        '404':
+          description: Session not found
+
+  /api/v1/users/me:
+    get:
+      tags: [Users]
+      operationId: getCurrentUser
+      summary: Get current user profile
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '401':
+          description: Unauthorized
+    put:
+      tags: [Users]
+      operationId: updateProfile
+      summary: Update current user profile
+      security:
+        - BearerAuth: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfileRequest'
+      responses:
+        '200':
+          description: Profile updated
+        '400':
+          description: Validation error
+        '401':
+          description: Unauthorized
+    delete:
+      tags: [Users]
+      operationId: deleteAccount
+      summary: Delete current user account
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Account deleted
+        '401':
+          description: Unauthorized
+
+  /api/v1/users/avatar:
+    post:
+      tags: [Users]
+      operationId: uploadAvatar
+      summary: Upload user avatar
+      security:
+        - BearerAuth: []
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                avatar:
+                  type: string
+                  format: binary
+      responses:
+        '200':
+          description: Avatar uploaded
+        '413':
+          description: File too large
+    delete:
+      tags: [Users]
+      operationId: deleteAvatar
+      summary: Delete user avatar
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Avatar deleted
+
+  /api/v1/users/{id}:
+    get:
+      tags: [Users]
+      operationId: getPublicProfile
+      summary: Get public user profile
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Public profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicUserResponse'
+        '400':
+          description: Invalid UUID format
+        '404':
+          description: User not found
+
+  /health:
+    get:
+      tags: [Health]
+      operationId: healthCheck
+      summary: Liveness probe
+      responses:
+        '200':
+          description: Service is alive
+
+  /ready:
+    get:
+      tags: [Health]
+      operationId: readinessCheck
+      summary: Readiness probe
+      responses:
+        '200':
+          description: Service is ready
+        '503':
+          description: Dependencies unhealthy
+
+  /metrics:
+    get:
+      tags: [Health]
+      operationId: getMetrics
+      summary: Prometheus metrics endpoint
+      responses:
+        '200':
+          description: Prometheus text format metrics
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT access token with 24h key rotation and 15min grace period
+
+  schemas:
+    RegisterRequest:
+      type: object
+      required: [username, email, password, first_name, last_name]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 50
+        email:
+          type: string
+          format: email
+          maxLength: 255
+        password:
+          type: string
+          minLength: 8
+          maxLength: 128
+        first_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        last_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        role:
+          type: string
+          enum: [bidder, seller]
+          default: bidder
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    AuthResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            access_token:
+              type: string
+            refresh_token:
+              type: string
+            expires_in:
+              type: integer
+              description: Seconds until access token expires
+            token_type:
+              type: string
+              example: Bearer
+            user:
+              $ref: '#/components/schemas/UserResponse'
+
+    UserResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+        first_name:
+          type: string
+        last_name:
+          type: string
+        role:
+          type: string
+          enum: [bidder, seller, admin]
+        created_at:
+          type: string
+          format: date-time
+
+    PublicUserResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        role:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    UpdateProfileRequest:
+      type: object
+      properties:
+        first_name:
+          type: string
+          maxLength: 100
+        last_name:
+          type: string
+          maxLength: 100
+
+    SessionListResponse:
+      type: object
+      properties:
+        sessions:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              ip_address:
+                type: string
+              user_agent:
+                type: string
+              created_at:
+                type: string
+                format: date-time
+              last_active:
+                type: string
+                format: date-time
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: VALIDATION_ERROR
+            message:
+              type: string
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  message:
+                    type: string
+        correlation_id:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time

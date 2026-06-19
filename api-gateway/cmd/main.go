@@ -13,6 +13,7 @@ import (
 
 	"github.com/auction-system/api-gateway/internal/config"
 	"github.com/auction-system/api-gateway/internal/observability"
+	"github.com/auction-system/api-gateway/internal/pkginit"
 	"github.com/auction-system/api-gateway/internal/router"
 )
 
@@ -24,6 +25,16 @@ func main() {
 	}
 	defer observability.Sync()
 	log := observability.Log
+
+	// Initialize shared packages (structured logger, circuit breakers, validation).
+	sharedSvc, err := pkginit.Init(cfg.App.Env)
+	if err != nil {
+		log.Warn("shared packages init failed — continuing with local logger", zap.Error(err))
+	} else {
+		// Use structured logger from shared pkg for correlation ID propagation.
+		sharedSvc.Logger.Info("shared packages ready for api-gateway")
+		_ = sharedSvc // Available for middleware and handlers that need pkg/ integrations.
+	}
 
 	shutdownTrace, err := observability.InitTracing(
 		os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),

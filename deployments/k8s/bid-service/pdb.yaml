@@ -4,8 +4,7 @@ metadata:
   name: bid-service-pdb
   namespace: auction-system
 spec:
-  # At least 2 pods must stay up during node drain / cluster maintenance
-  minAvailable: 2
+  minAvailable: 1
   selector:
     matchLabels:
       app: bid-service

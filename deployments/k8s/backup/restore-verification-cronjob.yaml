@@ -1,0 +1,296 @@
+# PostgreSQL Automated Restore Verification CronJob
+# Requirement 7.4:
+#   Verify backup integrity by performing automated restore test weekly.
+#   Success = completed restore to a temporary database instance +
+#   validation that all tables and row counts match the source within 1% variance.
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-restore-verification
+  namespace: auction-system
+  labels:
+    app: postgres-restore-verification
+    component: database
+    tier: infrastructure
+spec:
+  # Weekly on Sunday at 04:00 UTC
+  schedule: "0 4 * * 0"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 4
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    metadata:
+      labels:
+        app: postgres-restore-verification
+        component: database
+    spec:
+      # Allow up to 90 minutes for large restores
+      activeDeadlineSeconds: 5400
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app: postgres-restore-verification
+            component: database
+        spec:
+          restartPolicy: Never
+          serviceAccountName: backup-service-account
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            fsGroup: 10001
+          containers:
+            - name: restore-verify
+              image: postgres:16-alpine@sha256:d898b0b78a2627cb4ee63464a14571900d4e0f43d490f4e05a93b9a513ab1bce
+              command:
+                - /bin/sh
+                - /scripts/restore-verify.sh
+              env:
+                - name: DB_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: auction-system-secrets
+                      key: DB_URL
+                - name: RESTORE_DB_HOST
+                  valueFrom:
+                    secretKeyRef:
+                      name: auction-system-secrets
+                      key: RESTORE_DB_HOST
+                - name: RESTORE_DB_PORT
+                  value: "5432"
+                - name: RESTORE_DB_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: auction-system-secrets
+                      key: RESTORE_DB_USER
+                - name: RESTORE_DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: auction-system-secrets
+                      key: RESTORE_DB_PASSWORD
+                - name: PGCONNECT_TIMEOUT
+                  value: "30"
+                # Maximum allowed row count variance (1% = 0.01)
+                - name: MAX_VARIANCE
+                  value: "0.01"
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /backups
+                  readOnly: true
+                - name: scripts
+                  mountPath: /scripts
+              resources:
+                requests:
+                  cpu: "500m"
+                  memory: "1Gi"
+                limits:
+                  cpu: "2000m"
+                  memory: "2Gi"
+          volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: postgres-backup-pvc
+            - name: scripts
+              configMap:
+                name: restore-verification-scripts
+                items:
+                  - key: restore-verify.sh
+                    path: restore-verify.sh
+                    mode: 0755
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: restore-verification-scripts
+  namespace: auction-system
+  labels:
+    app: postgres-restore-verification
+    component: database
+data:
+  restore-verify.sh: |
+    #!/bin/sh
+    set -e
+
+    echo "============================================================"
+    echo "[$(date -Iseconds)] PostgreSQL Restore Verification Starting"
+    echo "============================================================"
+
+    # ──────────────────────────────────────────────────────────────────
+    # Step 1: Find the most recent backup file
+    # ──────────────────────────────────────────────────────────────────
+    BACKUP_DIR="/backups/full"
+    LATEST_BACKUP=$(ls -t "${BACKUP_DIR}"/*.dump 2>/dev/null | head -1)
+
+    if [ -z "$LATEST_BACKUP" ]; then
+      echo "[$(date -Iseconds)] ERROR: No backup files found in ${BACKUP_DIR}"
+      exit 1
+    fi
+
+    LATEST_META="${LATEST_BACKUP%.dump}.meta.json"
+    echo "[$(date -Iseconds)] Latest backup: $(basename $LATEST_BACKUP)"
+    echo "[$(date -Iseconds)] Backup size: $(du -h $LATEST_BACKUP | cut -f1)"
+
+    # ──────────────────────────────────────────────────────────────────
+    # Step 2: Create temporary restore database
+    # ──────────────────────────────────────────────────────────────────
+    TEMP_DB="auction_restore_verify_$(date +%s)"
+    RESTORE_URL="postgresql://${RESTORE_DB_USER}:${RESTORE_DB_PASSWORD}@${RESTORE_DB_HOST}:${RESTORE_DB_PORT}/postgres"
+    TEMP_DB_URL="postgresql://${RESTORE_DB_USER}:${RESTORE_DB_PASSWORD}@${RESTORE_DB_HOST}:${RESTORE_DB_PORT}/${TEMP_DB}"
+
+    echo "[$(date -Iseconds)] Creating temporary database: ${TEMP_DB}"
+    psql "$RESTORE_URL" --no-password -c "CREATE DATABASE ${TEMP_DB};" 2>&1
+
+    # Ensure cleanup on exit
+    cleanup() {
+      echo "[$(date -Iseconds)] Cleaning up temporary database: ${TEMP_DB}"
+      psql "$RESTORE_URL" --no-password -c "DROP DATABASE IF EXISTS ${TEMP_DB};" 2>&1 || true
+    }
+    trap cleanup EXIT
+
+    # ──────────────────────────────────────────────────────────────────
+    # Step 3: Restore backup to temporary database
+    # ──────────────────────────────────────────────────────────────────
+    echo "[$(date -Iseconds)] Restoring backup to temporary database..."
+    START_TIME=$(date +%s)
+
+    pg_restore \
+      --dbname="$TEMP_DB_URL" \
+      --no-owner \
+      --no-privileges \
+      --jobs=4 \
+      --verbose \
+      "$LATEST_BACKUP" 2>&1 | tail -20
+
+    END_TIME=$(date +%s)
+    RESTORE_DURATION=$((END_TIME - START_TIME))
+    echo "[$(date -Iseconds)] Restore completed in ${RESTORE_DURATION}s"
+
+    # ──────────────────────────────────────────────────────────────────
+    # Step 4: Validate tables exist in restored database
+    # ──────────────────────────────────────────────────────────────────
+    echo "[$(date -Iseconds)] Validating restored database tables..."
+
+    # Get table list from source
+    SOURCE_TABLES=$(psql "$DB_URL" --no-password -t -A -c "
+      SELECT schemaname || '.' || tablename
+      FROM pg_tables
+      WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
+      ORDER BY schemaname, tablename;
+    ")
+
+    # Get table list from restored DB
+    RESTORED_TABLES=$(psql "$TEMP_DB_URL" --no-password -t -A -c "
+      SELECT schemaname || '.' || tablename
+      FROM pg_tables
+      WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
+      ORDER BY schemaname, tablename;
+    ")
+
+    # Compare table lists
+    SOURCE_TABLE_COUNT=$(echo "$SOURCE_TABLES" | wc -l)
+    RESTORED_TABLE_COUNT=$(echo "$RESTORED_TABLES" | wc -l)
+
+    echo "[$(date -Iseconds)] Source tables: ${SOURCE_TABLE_COUNT}"
+    echo "[$(date -Iseconds)] Restored tables: ${RESTORED_TABLE_COUNT}"
+
+    if [ "$SOURCE_TABLE_COUNT" -ne "$RESTORED_TABLE_COUNT" ]; then
+      echo "[$(date -Iseconds)] ERROR: Table count mismatch!"
+      echo "Source tables not in restored:"
+      comm -23 <(echo "$SOURCE_TABLES" | sort) <(echo "$RESTORED_TABLES" | sort)
+      exit 1
+    fi
+
+    # ──────────────────────────────────────────────────────────────────
+    # Step 5: Validate row counts within 1% variance
+    # ──────────────────────────────────────────────────────────────────
+    echo "[$(date -Iseconds)] Validating row counts (max variance: ${MAX_VARIANCE})..."
+
+    VERIFICATION_PASSED=true
+    TOTAL_TABLES=0
+    TABLES_CHECKED=0
+
+    # Get row counts from source
+    psql "$DB_URL" --no-password -t -A -F'|' -c "
+      SELECT schemaname || '.' || relname, n_live_tup
+      FROM pg_stat_user_tables
+      ORDER BY schemaname, relname;
+    " > /tmp/source_counts.txt
+
+    while IFS='|' read -r TABLE_NAME SOURCE_COUNT; do
+      [ -z "$TABLE_NAME" ] && continue
+      TOTAL_TABLES=$((TOTAL_TABLES + 1))
+
+      # Get restored count
+      RESTORED_COUNT=$(psql "$TEMP_DB_URL" --no-password -t -A -c "
+        SELECT n_live_tup FROM pg_stat_user_tables
+        WHERE schemaname || '.' || relname = '${TABLE_NAME}';
+      " 2>/dev/null || echo "0")
+
+      # Trim whitespace
+      RESTORED_COUNT=$(echo "$RESTORED_COUNT" | tr -d ' ')
+      SOURCE_COUNT=$(echo "$SOURCE_COUNT" | tr -d ' ')
+
+      # Handle empty/zero counts
+      if [ -z "$RESTORED_COUNT" ]; then
+        RESTORED_COUNT=0
+      fi
+      if [ -z "$SOURCE_COUNT" ]; then
+        SOURCE_COUNT=0
+      fi
+
+      # Calculate variance
+      if [ "$SOURCE_COUNT" -eq 0 ] && [ "$RESTORED_COUNT" -eq 0 ]; then
+        VARIANCE="0.00"
+        STATUS="✅"
+      elif [ "$SOURCE_COUNT" -eq 0 ]; then
+        VARIANCE="1.00"
+        STATUS="❌"
+        VERIFICATION_PASSED=false
+      else
+        # Use awk for floating point arithmetic
+        VARIANCE=$(awk "BEGIN {
+          diff = ($RESTORED_COUNT - $SOURCE_COUNT);
+          if (diff < 0) diff = -diff;
+          v = diff / $SOURCE_COUNT;
+          printf \"%.4f\", v
+        }")
+
+        # Check if variance exceeds threshold
+        EXCEEDS=$(awk "BEGIN { print ($VARIANCE > $MAX_VARIANCE) ? \"yes\" : \"no\" }")
+        if [ "$EXCEEDS" = "yes" ]; then
+          STATUS="❌"
+          VERIFICATION_PASSED=false
+        else
+          STATUS="✅"
+        fi
+      fi
+
+      TABLES_CHECKED=$((TABLES_CHECKED + 1))
+      echo "  ${STATUS} ${TABLE_NAME}: source=${SOURCE_COUNT} restored=${RESTORED_COUNT} variance=${VARIANCE}"
+
+    done < /tmp/source_counts.txt
+
+    # ──────────────────────────────────────────────────────────────────
+    # Step 6: Report results
+    # ──────────────────────────────────────────────────────────────────
+    echo ""
+    echo "============================================================"
+    echo "RESTORE VERIFICATION REPORT"
+    echo "============================================================"
+    echo "  Backup file:      $(basename $LATEST_BACKUP)"
+    echo "  Restore duration: ${RESTORE_DURATION}s"
+    echo "  Tables checked:   ${TABLES_CHECKED}/${TOTAL_TABLES}"
+    echo "  Max variance:     ${MAX_VARIANCE} (1%)"
+    echo "  Temp database:    ${TEMP_DB}"
+    echo "============================================================"
+
+    if [ "$VERIFICATION_PASSED" = "true" ]; then
+      echo "[$(date -Iseconds)] ✅ RESTORE VERIFICATION PASSED"
+      echo "  All tables and row counts match within ${MAX_VARIANCE} variance."
+      exit 0
+    else
+      echo "[$(date -Iseconds)] ❌ RESTORE VERIFICATION FAILED"
+      echo "  One or more tables exceed the allowed variance threshold."
+      exit 1
+    fi

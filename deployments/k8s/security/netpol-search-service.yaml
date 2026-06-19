@@ -1,0 +1,78 @@
+# NetworkPolicy for search-service
+# Requirement 20.1: api-gateway to search-service (via design architecture)
+# Requirement 20.2: Explicit ingress allow rules
+# Requirement 20.7: Explicit egress allow rules
+#
+# Ingress: from api-gateway only
+# Egress: to PostgreSQL, Kafka (event consumption for indexing)
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-search-service-ingress
+  namespace: auction-system
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: network-security
+spec:
+  podSelector:
+    matchLabels:
+      app: search-service
+  policyTypes:
+    - Ingress
+  ingress:
+    # Allow traffic from api-gateway
+    - from:
+        - podSelector:
+            matchLabels:
+              app: api-gateway
+      ports:
+        - protocol: TCP
+          port: 8086
+    # Allow Prometheus scraping
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8086
+
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-search-service-egress
+  namespace: auction-system
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: network-security
+spec:
+  podSelector:
+    matchLabels:
+      app: search-service
+  policyTypes:
+    - Egress
+  egress:
+    # To PostgreSQL (query/index)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: auction-system
+          podSelector:
+            matchLabels:
+              app: postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+    # To Kafka (event consumption for indexing)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: auction-system
+          podSelector:
+            matchLabels:
+              app: kafka
+      ports:
+        - protocol: TCP
+          port: 9092

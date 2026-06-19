@@ -85,8 +85,8 @@ services:
 
   user-service:
     build:
-      context: ./services/user-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/user-service/Dockerfile
     container_name: auction-user-service
     ports:
       - "8081:8081"
@@ -111,8 +111,8 @@ services:
 
   auction-service:
     build:
-      context: ./services/auction-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/auction-service/Dockerfile
     container_name: auction-auction-service
     ports:
       - "8083:8083"
@@ -139,8 +139,8 @@ services:
 
   bid-service:
     build:
-      context: ./services/bid-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/bid-service/Dockerfile
     container_name: auction-bid-service
     ports:
       - "8082:8082"
@@ -169,8 +169,8 @@ services:
 
   payment-service:
     build:
-      context: ./services/payment-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/payment-service/Dockerfile
     container_name: auction-payment-service
     ports:
       - "8085:8085"
@@ -192,8 +192,8 @@ services:
 
   notification-service:
     build:
-      context: ./services/notification-service
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: services/notification-service/Dockerfile
     container_name: auction-notification-service
     ports:
       - "8084:8084"
@@ -218,8 +218,8 @@ services:
 
   api-gateway:
     build:
-      context: ./api-gateway
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: api-gateway/Dockerfile
     container_name: auction-api-gateway
     ports:
       - "8080:8080"

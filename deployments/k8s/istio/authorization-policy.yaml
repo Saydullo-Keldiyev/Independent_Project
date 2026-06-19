@@ -1,75 +1,326 @@
-# AuthorizationPolicy — zero-trust network policy inside the mesh.
-# Only explicitly allowed service-to-service calls are permitted.
+# Istio AuthorizationPolicy — zero-trust service mesh authorization.
+# Requirement 12.6: Default-deny AuthorizationPolicy with explicit
+#                    service-to-service communication paths.
+#
+# Architecture:
+#   istio-ingress → api-gateway → {bid, user, auction, notification, payment, search}-service
+#   bid-service → auction-service (bid validation)
+#   bid-service → payment-service (fund holds)
+#   auction-service → notification-service (auction events)
+#   monitoring/prometheus → all services (metrics scraping)
+#
+# Service accounts follow the pattern: {service-name}-sa
+# SPIFFE identity: cluster.local/ns/auction-system/sa/{service-name}-sa
 
-# ── Default: deny all ─────────────────────────────────────────────────────────
-# Start with deny-all, then add explicit allow rules below.
+# ══════════════════════════════════════════════════════════════════════════════
+# DEFAULT DENY — reject all traffic not explicitly permitted
+# ══════════════════════════════════════════════════════════════════════════════
+---
 apiVersion: security.istio.io/v1beta1
 kind: AuthorizationPolicy
 metadata:
   name: deny-all
   namespace: auction-system
-spec: {}   # empty spec = deny all
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: security
+    app.kubernetes.io/managed-by: kustomize
+spec: {}
+# Empty spec = deny all requests not matched by any ALLOW policy
+
+# ══════════════════════════════════════════════════════════════════════════════
+# INGRESS: istio-system ingress gateway → api-gateway
+# ══════════════════════════════════════════════════════════════════════════════
 ---
-# ── Allow: ingress gateway → api-gateway ─────────────────────────────────────
 apiVersion: security.istio.io/v1beta1
 kind: AuthorizationPolicy
 metadata:
-  name: allow-ingress-to-gateway
+  name: allow-ingress-to-api-gateway
   namespace: auction-system
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: security
 spec:
   selector:
     matchLabels:
       app: api-gateway
+  action: ALLOW
   rules:
     - from:
         - source:
-            namespaces: ["istio-system"]   # ingress gateway namespace
----
-# ── Allow: api-gateway → all services ────────────────────────────────────────
-apiVersion: security.istio.io/v1beta1
-kind: AuthorizationPolicy
-metadata:
-  name: allow-gateway-to-services
-  namespace: auction-system
-spec:
-  # Applies to all services EXCEPT api-gateway itself
-  rules:
-    - from:
-        - source:
-            principals:
-              - "cluster.local/ns/auction-system/sa/auction-service-account"
+            namespaces: ["istio-system"]
       to:
         - operation:
-            methods: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+            methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"]
+            ports: ["8080"]
+
+# ══════════════════════════════════════════════════════════════════════════════
+# API GATEWAY → BACKEND SERVICES
+# The api-gateway is the single entry point for external traffic.
+# ══════════════════════════════════════════════════════════════════════════════
 ---
-# ── Allow: bid-service → kafka (external, no Istio) ──────────────────────────
-# Kafka is outside the mesh — allow egress from bid-service
 apiVersion: security.istio.io/v1beta1
 kind: AuthorizationPolicy
 metadata:
-  name: allow-bid-service-egress
+  name: allow-gateway-to-bid-service
   namespace: auction-system
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: security
 spec:
   selector:
     matchLabels:
       app: bid-service
+  action: ALLOW
   rules:
-    - to:
+    - from:
+        - source:
+            principals:
+              - "cluster.local/ns/auction-system/sa/api-gateway-sa"
+      to:
         - operation:
-            ports: ["9092"]   # Kafka port
+            methods: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+            ports: ["8082"]
 ---
-# ── Allow: Prometheus scraping ────────────────────────────────────────────────
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-gateway-to-user-service
+  namespace: auction-system
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: security
+spec:
+  selector:
+    matchLabels:
+      app: user-service
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - "cluster.local/ns/auction-system/sa/api-gateway-sa"
+      to:
+        - operation:
+            methods: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+            ports: ["8081"]
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-gateway-to-auction-service
+  namespace: auction-system
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: security
+spec:
+  selector:
+    matchLabels:
+      app: auction-service
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - "cluster.local/ns/auction-system/sa/api-gateway-sa"
+      to:
+        - operation:
+            methods: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+            ports: ["8083"]
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-gateway-to-notification-service
+  namespace: auction-system
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: security
+spec:
+  selector:
+    matchLabels:
+      app: notification-service
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - "cluster.local/ns/auction-system/sa/api-gateway-sa"
+      to:
+        - operation:
+            methods: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+            ports: ["8084"]
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-gateway-to-payment-service
+  namespace: auction-system
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: security
+spec:
+  selector:
+    matchLabels:
+      app: payment-service
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - "cluster.local/ns/auction-system/sa/api-gateway-sa"
+      to:
+        - operation:
+            methods: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+            ports: ["8085"]
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-gateway-to-search-service
+  namespace: auction-system
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: security
+spec:
+  selector:
+    matchLabels:
+      app: search-service
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - "cluster.local/ns/auction-system/sa/api-gateway-sa"
+      to:
+        - operation:
+            methods: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+            ports: ["8086"]
+
+# ══════════════════════════════════════════════════════════════════════════════
+# INTER-SERVICE: bid-service → auction-service (bid validation)
+# ══════════════════════════════════════════════════════════════════════════════
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-bid-to-auction-service
+  namespace: auction-system
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: security
+spec:
+  selector:
+    matchLabels:
+      app: auction-service
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - "cluster.local/ns/auction-system/sa/bid-service-sa"
+      to:
+        - operation:
+            methods: ["GET", "POST"]
+            ports: ["8083"]
+
+# ══════════════════════════════════════════════════════════════════════════════
+# INTER-SERVICE: bid-service → payment-service (fund holds)
+# ══════════════════════════════════════════════════════════════════════════════
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-bid-to-payment-service
+  namespace: auction-system
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: security
+spec:
+  selector:
+    matchLabels:
+      app: payment-service
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - "cluster.local/ns/auction-system/sa/bid-service-sa"
+      to:
+        - operation:
+            methods: ["POST"]
+            ports: ["8085"]
+            paths: ["/api/v1/wallets/*/hold", "/api/v1/wallets/*/release"]
+
+# ══════════════════════════════════════════════════════════════════════════════
+# INTER-SERVICE: auction-service → notification-service (auction events)
+# ══════════════════════════════════════════════════════════════════════════════
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-auction-to-notification-service
+  namespace: auction-system
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: security
+spec:
+  selector:
+    matchLabels:
+      app: notification-service
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - "cluster.local/ns/auction-system/sa/auction-service-sa"
+      to:
+        - operation:
+            methods: ["POST"]
+            ports: ["8084"]
+            paths: ["/api/v1/notifications", "/api/v1/notifications/*"]
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MONITORING: Prometheus → all services (metrics scraping on /metrics)
+# ══════════════════════════════════════════════════════════════════════════════
+---
 apiVersion: security.istio.io/v1beta1
 kind: AuthorizationPolicy
 metadata:
   name: allow-prometheus-scrape
   namespace: auction-system
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: security
 spec:
+  action: ALLOW
   rules:
     - from:
         - source:
             namespaces: ["monitoring"]
       to:
         - operation:
-            paths: ["/metrics"]
             methods: ["GET"]
+            paths: ["/metrics", "/healthz", "/readyz"]
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HEALTH CHECKS: kubelet → all services (liveness/readiness probes)
+# Note: kubelet traffic bypasses the mesh when using command probes,
+# but HTTP probes through the sidecar need this policy.
+# ══════════════════════════════════════════════════════════════════════════════
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: allow-health-checks
+  namespace: auction-system
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: security
+spec:
+  action: ALLOW
+  rules:
+    - to:
+        - operation:
+            methods: ["GET"]
+            paths: ["/healthz", "/readyz", "/livez", "/health"]

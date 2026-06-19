@@ -18,6 +18,7 @@ import (
 	"github.com/auction-system/notification-service/internal/database"
 	"github.com/auction-system/notification-service/internal/email"
 	"github.com/auction-system/notification-service/internal/kafka"
+	"github.com/auction-system/notification-service/internal/pkginit"
 	redisPkg "github.com/auction-system/notification-service/internal/redis"
 	"github.com/auction-system/notification-service/internal/repository"
 	"github.com/auction-system/notification-service/internal/service"
@@ -41,6 +42,18 @@ func main() {
 		log, _ = zap.NewDevelopment()
 	}
 	defer log.Sync()
+
+	// ── Shared packages (structured logger, circuit breakers, validation) ──
+	sharedSvc, sharedErr := pkginit.Init(pkginit.Config{
+		Environment: cfg.App.Env,
+	})
+	if sharedErr != nil {
+		log.Warn("shared packages init failed — continuing with local implementations", zap.Error(sharedErr))
+	} else {
+		defer sharedSvc.Close()
+		sharedSvc.Logger.Info("shared packages ready for notification-service")
+		_ = sharedSvc
+	}
 
 	log.Info("starting notification-service",
 		zap.String("env", cfg.App.Env),

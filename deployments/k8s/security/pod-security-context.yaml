@@ -1,0 +1,73 @@
+# Pod Security Context reference for all services
+# Requirement 20.4: runAsNonRoot, drop all capabilities, allowPrivilegeEscalation: false
+# Requirement 20.5: readOnlyRootFilesystem, writable only emptyDir for /tmp
+#
+# This file documents the required securityContext and volumeMounts pattern
+# that MUST be applied to all deployments in the auction-system namespace.
+# Individual deployment files already include these settings; this serves as
+# a reference and validation template.
+#
+# Each container in the auction-system namespace MUST include:
+#
+# spec:
+#   securityContext:
+#     runAsNonRoot: true
+#     seccompProfile:
+#       type: RuntimeDefault
+#   containers:
+#     - securityContext:
+#         runAsNonRoot: true
+#         runAsUser: 10000
+#         readOnlyRootFilesystem: true
+#         allowPrivilegeEscalation: false
+#         capabilities:
+#           drop: ["ALL"]
+#       volumeMounts:
+#         - name: tmp
+#           mountPath: /tmp
+#   volumes:
+#     - name: tmp
+#       emptyDir:
+#         sizeLimit: 64Mi
+---
+# Example: Restricted pod security context patch (used with kustomize)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pod-security-template
+  namespace: auction-system
+  annotations:
+    description: >
+      Template demonstrating the restricted Pod Security Standards configuration.
+      Apply this pattern to all service deployments.
+spec:
+  template:
+    spec:
+      # Pod-level security context
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+        fsGroup: 10000
+
+      containers:
+        - name: application
+          # Container-level security context
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10000
+            runAsGroup: 10000
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
+          volumeMounts:
+            # Only /tmp is writable via emptyDir
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

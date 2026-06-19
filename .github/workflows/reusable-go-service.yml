@@ -23,7 +23,7 @@ on:
       coverage-threshold:
         required: false
         type: string
-        default: "70"
+        default: "80"
     secrets:
       REGISTRY_TOKEN:
         required: false
@@ -66,6 +66,17 @@ jobs:
           if (( $(echo "$COVERAGE < ${{ inputs.coverage-threshold }}" | bc -l) )); then
             echo "❌ Coverage ${COVERAGE}% < ${{ inputs.coverage-threshold }}%"
             exit 1
+          fi
+
+      - name: Run property-based tests (rapid, 100+ iterations)
+        run: |
+          # Run property tests with explicit rapid count if test files exist
+          PROP_FILES=$(grep -rl "rapid\." --include="*_test.go" . || true)
+          if [ -n "$PROP_FILES" ]; then
+            echo "Running property-based tests with 100+ iterations..."
+            go test -race -run "Property|Prop" -count=1 -timeout=300s -rapid.checks=100 ./...
+          else
+            echo "No property-based tests found in ${{ inputs.service-path }}, skipping."
           fi
 
       - name: golangci-lint
@@ -135,14 +146,13 @@ jobs:
         env:
           COSIGN_EXPERIMENTAL: "true"
 
-      - name: Trivy scan
+      - name: Trivy vulnerability scan — fail on CRITICAL/HIGH
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
           format: table
           severity: CRITICAL,HIGH
           exit-code: "1"
-        continue-on-error: true
 
   update-manifest-dev:
     name: GitOps — Dev Overlay

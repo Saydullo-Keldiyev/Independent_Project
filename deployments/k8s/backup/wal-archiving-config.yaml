@@ -1,0 +1,128 @@
+# PostgreSQL WAL Archiving Configuration
+# Requirements: 7.3
+#
+# Enables point-in-time recovery (PITR) via WAL archiving.
+# WAL segments are retained for a minimum of 7 days.
+# WAL files are archived to the backup PVC alongside full backups.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-wal-config
+  namespace: auction-system
+  labels:
+    app: postgresql
+    component: database
+    tier: infrastructure
+data:
+  # PostgreSQL WAL archiving configuration
+  # These settings should be included in postgresql.conf or set via
+  # the PostgreSQL Helm chart's configuration values
+  postgresql.conf.wal: |
+    # ─────────────────────────────────────────────────────────────────────────
+    # WAL Archiving Configuration for Point-in-Time Recovery
+    # Requirement 7.3: WAL archiving with ≥7 day retention
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # Enable WAL archiving
+    wal_level = replica
+    archive_mode = on
+    archive_command = 'test ! -f /backups/wal/%f && cp %p /backups/wal/%f && gzip /backups/wal/%f'
+
+    # WAL generation settings
+    max_wal_senders = 5
+    wal_keep_size = '4GB'
+
+    # Checkpoint tuning for backup performance
+    checkpoint_timeout = '15min'
+    checkpoint_completion_target = 0.9
+    max_wal_size = '2GB'
+    min_wal_size = '1GB'
+
+  # Recovery configuration template (for restore operations)
+  recovery.conf.template: |
+    # Point-in-Time Recovery Configuration
+    # Used by restore-verification job to perform PITR
+    restore_command = 'gunzip -c /backups/wal/%f.gz > %p'
+    recovery_target_time = 'REPLACE_WITH_TARGET_TIME'
+    recovery_target_action = 'promote'
+
+  # WAL cleanup script (removes WAL files older than 7 days)
+  wal-cleanup.sh: |
+    #!/bin/sh
+    set -e
+
+    WAL_DIR="/backups/wal"
+    RETENTION_DAYS=7
+
+    echo "[$(date -Iseconds)] Cleaning WAL files older than ${RETENTION_DAYS} days..."
+
+    # Count files before cleanup
+    BEFORE_COUNT=$(find "$WAL_DIR" -name "*.gz" -type f | wc -l)
+
+    # Remove WAL files older than retention period
+    find "$WAL_DIR" -name "*.gz" -type f -mtime +${RETENTION_DAYS} -delete
+
+    # Count files after cleanup
+    AFTER_COUNT=$(find "$WAL_DIR" -name "*.gz" -type f | wc -l)
+    DELETED=$((BEFORE_COUNT - AFTER_COUNT))
+
+    echo "[$(date -Iseconds)] WAL cleanup complete: removed ${DELETED} files (${AFTER_COUNT} remaining)"
+---
+# CronJob to clean up old WAL files (runs daily)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-wal-cleanup
+  namespace: auction-system
+  labels:
+    app: postgres-backup
+    component: database
+    tier: infrastructure
+spec:
+  # Daily at 03:00 UTC
+  schedule: "0 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 600
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: OnFailure
+          serviceAccountName: backup-service-account
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            fsGroup: 10001
+          containers:
+            - name: wal-cleanup
+              image: alpine:3.19
+              command:
+                - /bin/sh
+                - /scripts/wal-cleanup.sh
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /backups
+                - name: scripts
+                  mountPath: /scripts
+              resources:
+                requests:
+                  cpu: "50m"
+                  memory: "64Mi"
+                limits:
+                  cpu: "200m"
+                  memory: "128Mi"
+          volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: postgres-backup-pvc
+            - name: scripts
+              configMap:
+                name: postgres-wal-config
+                items:
+                  - key: wal-cleanup.sh
+                    path: wal-cleanup.sh
+                    mode: 0755

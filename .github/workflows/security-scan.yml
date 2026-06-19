@@ -8,6 +8,13 @@ on:
   schedule:
     # Run every day at 02:00 UTC — catch new CVEs even without code changes
     - cron: "0 2 * * *"
+    # Run weekly on Sunday at 03:00 UTC — full deployed image scan with team notification
+    - cron: "0 3 * * 0"
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
 
 jobs:
   # ── Secret Detection ────────────────────────────────────────────────────────
@@ -20,9 +27,170 @@ jobs:
           fetch-depth: 0   # full history for gitleaks
 
       - name: Run Gitleaks
+        id: gitleaks
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Block PR on secret detection
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.pulls.createReview({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              event: 'REQUEST_CHANGES',
+              body: '🚨 **Secret Detected** — Gitleaks found secrets in this PR. The merge is blocked until all secrets are removed. The security team has been notified.'
+            });
+
+      - name: Notify security team on secret detection
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `🚨 Secret detected in ${context.eventName === 'pull_request' ? 'PR #' + context.payload.pull_request.number : 'push to ' + context.ref}`;
+            const body = [
+              '## Secret Detection Alert',
+              '',
+              `**Repository:** ${context.repo.owner}/${context.repo.repo}`,
+              `**Event:** ${context.eventName}`,
+              `**Ref:** ${context.ref}`,
+              `**Actor:** ${context.actor}`,
+              `**Workflow Run:** ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              `**Timestamp:** ${new Date().toISOString()}`,
+              '',
+              'A secret was detected by Gitleaks. Immediate action required.',
+              '',
+              'cc @' + (process.env.SECURITY_TEAM || context.repo.owner + '/security-team')
+            ].join('\n');
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: title,
+              body: body,
+              labels: ['security', 'secret-leak', 'priority:critical']
+            });
+        env:
+          SECURITY_TEAM: ${{ vars.SECURITY_TEAM || '' }}
+
+  # ── Base Image Digest Validation ────────────────────────────────────────────
+  digest-validation:
+    name: Base Image Digest Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install crane (image registry tool)
+        run: |
+          CRANE_VERSION="0.19.1"
+          curl -sL "https://github.com/google/go-containerregistry/releases/download/v${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
+            | tar xz -C /usr/local/bin crane
+
+      - name: Validate base image digests
+        run: |
+          set -euo pipefail
+          FAILED=0
+          DOCKERFILES=$(find . -name "*.Dockerfile" -o -name "Dockerfile" | sort)
+
+          echo "=== Base Image Digest Validation ==="
+          echo ""
+
+          for dockerfile in $DOCKERFILES; do
+            echo "Checking: $dockerfile"
+            # Extract all FROM lines with @sha256: digests
+            DIGESTS=$(grep -E '^FROM .+@sha256:[a-f0-9]+' "$dockerfile" || true)
+
+            if [ -z "$DIGESTS" ]; then
+              echo "  ⚠️  No pinned digests found — skipping"
+              continue
+            fi
+
+            while IFS= read -r line; do
+              # Extract image reference (image@sha256:digest)
+              IMAGE_REF=$(echo "$line" | sed -E 's/^FROM\s+//;s/\s+AS\s+.*//i;s/\s*$//')
+              # Extract just the image name (without @sha256:...)
+              IMAGE_NAME=$(echo "$IMAGE_REF" | sed 's/@sha256:.*//')
+              # Extract the digest
+              DIGEST=$(echo "$IMAGE_REF" | grep -oP 'sha256:[a-f0-9]+')
+
+              echo "  Verifying: $IMAGE_NAME@$DIGEST"
+
+              # Check if the digest is still available in the upstream registry
+              if ! crane manifest "$IMAGE_NAME@$DIGEST" > /dev/null 2>&1; then
+                echo "  ❌ FAILED: Digest $DIGEST is no longer available for $IMAGE_NAME"
+                echo "     Dockerfile: $dockerfile"
+                FAILED=1
+              else
+                echo "  ✅ Available"
+              fi
+            done <<< "$DIGESTS"
+            echo ""
+          done
+
+          if [ $FAILED -ne 0 ]; then
+            echo ""
+            echo "❌ Build failed: One or more base image digests are unavailable in upstream registry."
+            echo "   Update the affected Dockerfiles with current digests."
+            exit 1
+          fi
+
+          echo "✅ All base image digests validated successfully."
+
+  # ── Container Image Vulnerability Scan (Trivy) ─────────────────────────────
+  container-scan:
+    name: Container Image Scan (Trivy)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: api-gateway
+            dockerfile: deployments/docker/gateway.Dockerfile
+          - service: bid-service
+            dockerfile: deployments/docker/bid.Dockerfile
+          - service: auction-service
+            dockerfile: deployments/docker/auction.Dockerfile
+          - service: user-service
+            dockerfile: deployments/docker/user.Dockerfile
+          - service: notification-service
+            dockerfile: deployments/docker/notification.Dockerfile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image for scanning
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: false
+          load: true
+          tags: scan-target/${{ matrix.service }}:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: scan-target/${{ matrix.service }}:ci
+          format: sarif
+          output: trivy-${{ matrix.service }}.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "1"   # Fail build on CRITICAL/HIGH CVEs
+
+      - name: Upload Trivy SARIF to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ matrix.service }}.sarif
+          category: trivy-${{ matrix.service }}
+        continue-on-error: true
 
   # ── Dependency Audit ────────────────────────────────────────────────────────
   dependency-audit:
@@ -85,7 +253,7 @@ jobs:
           scan-ref: deployments/docker
           format: table
           severity: CRITICAL,HIGH
-        continue-on-error: true
+          exit-code: "1"
 
   # ── OPA Policy Check ────────────────────────────────────────────────────────
   policy-check:
@@ -134,3 +302,151 @@ jobs:
           name: sbom
           path: sbom-full-repo.spdx.json
           retention-days: 90
+
+  # ── Weekly Vulnerability Scan for Deployed Images ───────────────────────────
+  # Scans running/deployed container images weekly and alerts security team
+  # within 60 minutes on CRITICAL findings (Requirement 20.6)
+  weekly-deployed-image-scan:
+    name: Weekly Deployed Image Vulnerability Scan
+    runs-on: ubuntu-latest
+    if: github.event.schedule == '0 3 * * 0'  # Only run on weekly Sunday schedule
+    permissions:
+      contents: read
+      packages: read
+      issues: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: api-gateway
+          - service: bid-service
+          - service: auction-service
+          - service: user-service
+          - service: notification-service
+          - service: payment-service
+          - service: search-service
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Determine latest deployed image tag
+        id: image-tag
+        run: |
+          IMAGE="ghcr.io/${{ github.repository_owner }}/${{ matrix.service }}"
+          # Try to find the latest main branch tag
+          TAG=$(git log --format='%H' -n 1 origin/main 2>/dev/null | cut -c1-7 || echo "main")
+          echo "image=${IMAGE}:sha-${TAG}" >> $GITHUB_OUTPUT
+          echo "image_name=${IMAGE}" >> $GITHUB_OUTPUT
+          # Fallback: use "main" tag if sha tag is not available
+          if ! docker manifest inspect "${IMAGE}:sha-${TAG}" > /dev/null 2>&1; then
+            echo "image=${IMAGE}:main" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Scan deployed image for vulnerabilities
+        id: trivy-scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.image-tag.outputs.image }}
+          format: json
+          output: trivy-${{ matrix.service }}-weekly.json
+          severity: CRITICAL,HIGH
+          exit-code: "0"   # Don't fail — we alert instead
+        continue-on-error: true
+
+      - name: Check for CRITICAL vulnerabilities and alert
+        id: check-critical
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const service = '${{ matrix.service }}';
+            const image = '${{ steps.image-tag.outputs.image }}';
+
+            let results;
+            try {
+              const raw = fs.readFileSync(`trivy-${service}-weekly.json`, 'utf8');
+              results = JSON.parse(raw);
+            } catch (e) {
+              console.log(`Could not parse scan results for ${service}: ${e.message}`);
+              return;
+            }
+
+            // Extract CRITICAL vulnerabilities
+            const criticals = [];
+            if (results.Results) {
+              for (const result of results.Results) {
+                if (result.Vulnerabilities) {
+                  for (const vuln of result.Vulnerabilities) {
+                    if (vuln.Severity === 'CRITICAL') {
+                      criticals.push({
+                        id: vuln.VulnerabilityID,
+                        pkg: vuln.PkgName,
+                        installed: vuln.InstalledVersion,
+                        fixed: vuln.FixedVersion || 'N/A',
+                        title: vuln.Title || vuln.Description || 'No description'
+                      });
+                    }
+                  }
+                }
+              }
+            }
+
+            if (criticals.length === 0) {
+              console.log(`✅ No CRITICAL vulnerabilities found in ${service}`);
+              return;
+            }
+
+            console.log(`🚨 Found ${criticals.length} CRITICAL vulnerabilities in ${service}`);
+
+            // Create GitHub issue to alert security team (within 60-min SLA)
+            const vulnTable = criticals.slice(0, 20).map(v =>
+              `| ${v.id} | ${v.pkg} | ${v.installed} | ${v.fixed} | ${v.title.substring(0, 80)} |`
+            ).join('\n');
+
+            const body = [
+              '## 🚨 Weekly Vulnerability Scan — CRITICAL Findings',
+              '',
+              `**Service:** ${service}`,
+              `**Image:** \`${image}\``,
+              `**Scan Date:** ${new Date().toISOString()}`,
+              `**CRITICAL CVEs Found:** ${criticals.length}`,
+              '',
+              '### Vulnerabilities',
+              '',
+              '| CVE ID | Package | Installed | Fixed | Title |',
+              '|--------|---------|-----------|-------|-------|',
+              vulnTable,
+              criticals.length > 20 ? `\n_...and ${criticals.length - 20} more_` : '',
+              '',
+              '### Required Action',
+              '',
+              '⏰ **SLA: Patch or mitigate within 7 calendar days** (per Requirement 20.6)',
+              '',
+              '1. Review the identified CVEs above',
+              '2. Update affected packages/base images',
+              '3. Rebuild and redeploy the service',
+              '4. Close this issue once remediated',
+              '',
+              `**Workflow Run:** ${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+              '',
+              'cc @' + (process.env.SECURITY_TEAM || context.repo.owner + '/security-team')
+            ].join('\n');
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🚨 [${service}] ${criticals.length} CRITICAL CVE(s) in deployed image`,
+              body: body,
+              labels: ['security', 'vulnerability', 'priority:critical', 'weekly-scan']
+            });
+
+            console.log(`📢 Created security alert issue for ${service}`);
+        env:
+          SECURITY_TEAM: ${{ vars.SECURITY_TEAM || '' }}

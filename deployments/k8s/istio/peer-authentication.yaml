@@ -1,12 +1,45 @@
-# mTLS — encrypt ALL traffic between services inside the mesh.
-# STRICT mode: plain-text connections are rejected.
-# This means even if an attacker gets inside the cluster,
-# they cannot intercept service-to-service traffic.
+# Istio PeerAuthentication — enforce mutual TLS for all pods in auction-system.
+# Requirement 12.5: Implement Istio PeerAuthentication in STRICT mode.
+#
+# STRICT mode means:
+# - All service-to-service traffic MUST be encrypted with mTLS
+# - Plain-text connections are rejected
+# - Each pod's Envoy sidecar presents a SPIFFE identity certificate
+# - Even if an attacker gains cluster network access, they cannot intercept traffic
+#
+# This is a namespace-wide policy. Every pod in auction-system must present
+# a valid Istio-issued certificate to communicate.
+---
 apiVersion: security.istio.io/v1beta1
 kind: PeerAuthentication
 metadata:
   name: default
   namespace: auction-system
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: security
+    app.kubernetes.io/managed-by: kustomize
 spec:
   mtls:
-    mode: STRICT   # enforce mTLS for all pods in this namespace
+    mode: STRICT
+---
+# Per-service PeerAuthentication for services that need port-level exceptions
+# (e.g., health check ports that may not have sidecars in certain scenarios).
+# Currently all ports enforce STRICT mTLS.
+apiVersion: security.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: api-gateway-mtls
+  namespace: auction-system
+  labels:
+    app.kubernetes.io/part-of: auction-system
+    app.kubernetes.io/component: security
+spec:
+  selector:
+    matchLabels:
+      app: api-gateway
+  mtls:
+    mode: STRICT
+  portLevelMtls:
+    8080:
+      mode: STRICT

@@ -18,7 +18,8 @@ type Config struct {
 	MaxConnIdleTime time.Duration
 }
 
-// DefaultConfig returns production-ready pool defaults
+// DefaultConfig returns production-ready pool defaults.
+// Max 25 connections, min 5, idle timeout 5 minutes per instance (Requirement 16.1).
 func DefaultConfig(url string) Config {
 	return Config{
 		URL:             url,

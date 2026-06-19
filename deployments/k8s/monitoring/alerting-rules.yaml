@@ -1,0 +1,204 @@
+# Prometheus Alerting Rules for Auction System
+# Requirements: 6.1, 6.2, 6.3, 6.4, 6.5, 6.6, 6.7, 6.8
+#
+# Alert rules are defined as a PrometheusRule CRD (for prometheus-operator)
+# and as a ConfigMap for standalone Prometheus deployments.
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: auction-system-alerts
+  namespace: monitoring
+  labels:
+    app: prometheus
+    role: alert-rules
+    prometheus: auction-system
+spec:
+  groups:
+    # ─────────────────────────────────────────────────────────────────────────
+    # Group: Service Health Alerts
+    # ─────────────────────────────────────────────────────────────────────────
+    - name: auction-system.service-health
+      rules:
+        # HighErrorRate: >5% error rate over 5 min → critical alert within 60s
+        # Requirement 6.1
+        - alert: HighErrorRate
+          expr: |
+            (
+              sum(rate(http_requests_total{status=~"5..", namespace="auction-system"}[5m])) by (service)
+              /
+              sum(rate(http_requests_total{namespace="auction-system"}[5m])) by (service)
+            ) > 0.05
+          for: 1m
+          labels:
+            severity: critical
+            team: platform
+            namespace: auction-system
+          annotations:
+            summary: "High error rate on {{ $labels.service }}"
+            description: >-
+              Service {{ $labels.service }} has an error rate of
+              {{ $value | humanizePercentage }} (threshold: 5%) over the last 5 minutes.
+            current_value: "{{ $value | humanizePercentage }}"
+            threshold: "5%"
+            timestamp: "{{ $externalLabels.cluster }} - {{ $labels.service }}"
+            runbook_url: "https://docs.auction-system.io/runbooks/high-error-rate"
+
+        # HighLatency: P99 >2s over 5 min → warning alert within 60s
+        # Requirement 6.2
+        - alert: HighLatency
+          expr: |
+            histogram_quantile(0.99,
+              sum(rate(http_request_duration_seconds_bucket{namespace="auction-system"}[5m])) by (service, le)
+            ) > 2
+          for: 5m
+          labels:
+            severity: warning
+            team: platform
+            namespace: auction-system
+          annotations:
+            summary: "High P99 latency on {{ $labels.service }}"
+            description: >-
+              Service {{ $labels.service }} P99 latency is {{ $value | humanizeDuration }}
+              (threshold: 2s) over the last 5 minutes.
+            current_value: "{{ $value | humanizeDuration }}"
+            threshold: "2s"
+            timestamp: "{{ $externalLabels.cluster }} - {{ $labels.service }}"
+            runbook_url: "https://docs.auction-system.io/runbooks/high-latency"
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Group: Kafka Alerts
+    # ─────────────────────────────────────────────────────────────────────────
+    - name: auction-system.kafka
+      rules:
+        # KafkaConsumerLag: >10000 messages for 5 min → critical alert within 60s
+        # Requirement 6.3
+        - alert: KafkaConsumerLag
+          expr: |
+            sum(kafka_consumer_group_lag{namespace="auction-system"}) by (service, consumer_group, topic) > 10000
+          for: 5m
+          labels:
+            severity: critical
+            team: platform
+            namespace: auction-system
+          annotations:
+            summary: "Kafka consumer lag critical on {{ $labels.service }}"
+            description: >-
+              Consumer group {{ $labels.consumer_group }} for topic {{ $labels.topic }}
+              on service {{ $labels.service }} has a lag of {{ $value }} messages
+              (threshold: 10000) for more than 5 minutes.
+            current_value: "{{ $value }} messages"
+            threshold: "10000 messages"
+            timestamp: "{{ $externalLabels.cluster }} - {{ $labels.service }}"
+            runbook_url: "https://docs.auction-system.io/runbooks/kafka-consumer-lag"
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Group: Pod Health Alerts
+    # ─────────────────────────────────────────────────────────────────────────
+    - name: auction-system.pod-health
+      rules:
+        # PodRestartLoop: >3 restarts in 10 min → warning alert within 60s
+        # Requirement 6.5
+        - alert: PodRestartLoop
+          expr: |
+            increase(kube_pod_container_status_restarts_total{namespace="auction-system"}[10m]) > 3
+          for: 1m
+          labels:
+            severity: warning
+            team: platform
+            namespace: auction-system
+          annotations:
+            summary: "Pod restart loop detected: {{ $labels.pod }}"
+            description: >-
+              Pod {{ $labels.pod }} (container: {{ $labels.container }}) in namespace
+              {{ $labels.namespace }} has restarted {{ $value | humanize }} times
+              in the last 10 minutes (threshold: 3).
+            current_value: "{{ $value | humanize }} restarts"
+            threshold: "3 restarts in 10 minutes"
+            timestamp: "{{ $externalLabels.cluster }} - {{ $labels.pod }}"
+            runbook_url: "https://docs.auction-system.io/runbooks/pod-restart-loop"
+
+---
+# ConfigMap version of alert rules for standalone Prometheus (without operator)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-alert-rules
+  namespace: monitoring
+  labels:
+    app: prometheus
+    role: alert-rules
+data:
+  auction-system-alerts.yml: |
+    groups:
+      - name: auction-system.service-health
+        rules:
+          - alert: HighErrorRate
+            expr: |
+              (
+                sum(rate(http_requests_total{status=~"5..", namespace="auction-system"}[5m])) by (service)
+                /
+                sum(rate(http_requests_total{namespace="auction-system"}[5m])) by (service)
+              ) > 0.05
+            for: 1m
+            labels:
+              severity: critical
+              team: platform
+              namespace: auction-system
+            annotations:
+              summary: "High error rate on {{ $labels.service }}"
+              description: "Service {{ $labels.service }} error rate is {{ $value | humanizePercentage }} (threshold: 5%) over last 5 minutes."
+              current_value: "{{ $value | humanizePercentage }}"
+              threshold: "5%"
+              runbook_url: "https://docs.auction-system.io/runbooks/high-error-rate"
+
+          - alert: HighLatency
+            expr: |
+              histogram_quantile(0.99,
+                sum(rate(http_request_duration_seconds_bucket{namespace="auction-system"}[5m])) by (service, le)
+              ) > 2
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              namespace: auction-system
+            annotations:
+              summary: "High P99 latency on {{ $labels.service }}"
+              description: "Service {{ $labels.service }} P99 latency is {{ $value | humanizeDuration }} (threshold: 2s) over last 5 minutes."
+              current_value: "{{ $value | humanizeDuration }}"
+              threshold: "2s"
+              runbook_url: "https://docs.auction-system.io/runbooks/high-latency"
+
+      - name: auction-system.kafka
+        rules:
+          - alert: KafkaConsumerLag
+            expr: |
+              sum(kafka_consumer_group_lag{namespace="auction-system"}) by (service, consumer_group, topic) > 10000
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              namespace: auction-system
+            annotations:
+              summary: "Kafka consumer lag critical on {{ $labels.service }}"
+              description: "Consumer group {{ $labels.consumer_group }} on topic {{ $labels.topic }} has lag of {{ $value }} messages (threshold: 10000)."
+              current_value: "{{ $value }} messages"
+              threshold: "10000 messages"
+              runbook_url: "https://docs.auction-system.io/runbooks/kafka-consumer-lag"
+
+      - name: auction-system.pod-health
+        rules:
+          - alert: PodRestartLoop
+            expr: |
+              increase(kube_pod_container_status_restarts_total{namespace="auction-system"}[10m]) > 3
+            for: 1m
+            labels:
+              severity: warning
+              team: platform
+              namespace: auction-system
+            annotations:
+              summary: "Pod restart loop detected: {{ $labels.pod }}"
+              description: "Pod {{ $labels.pod }} has restarted {{ $value | humanize }} times in last 10 minutes (threshold: 3)."
+              current_value: "{{ $value | humanize }} restarts"
+              threshold: "3 restarts in 10 minutes"
+              runbook_url: "https://docs.auction-system.io/runbooks/pod-restart-loop"

@@ -27,6 +27,14 @@ spec:
         version: v1
     spec:
       terminationGracePeriodSeconds: 30
+
+      # Pod-level security context for PSS restricted compliance
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+        fsGroup: 10000
+
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: topology.kubernetes.io/zone
@@ -100,11 +108,23 @@ spec:
             periodSeconds: 2
           securityContext:
             runAsNonRoot: true
-            runAsUser: 1000
+            runAsUser: 10000
+            runAsGroup: 10000
             readOnlyRootFilesystem: true
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
       serviceAccountName: auction-service-account
 ---
 apiVersion: v1
@@ -142,6 +162,12 @@ spec:
         target:
           type: Utilization
           averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 75
   behavior:
     scaleUp:
       stabilizationWindowSeconds: 60

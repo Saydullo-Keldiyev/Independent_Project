@@ -1,0 +1,145 @@
+# Database Migration Kubernetes Job Template
+# Runs migrations as a pre-deployment step (Requirement 7.1)
+# Must complete within 300s before app pods start.
+# On failure/timeout: halts deployment, executes rollback within 120s,
+# and reports failure with migration file name (Requirement 7.5).
+#
+# Usage: Replace <SERVICE_NAME> and <IMAGE_TAG> with actual values.
+# Deploy this Job as a Helm pre-install/pre-upgrade hook or
+# as an ArgoCD sync wave preceding application manifests.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${SERVICE_NAME}-migrate-${IMAGE_TAG}
+  namespace: auction-system
+  labels:
+    app.kubernetes.io/name: ${SERVICE_NAME}-migrate
+    app.kubernetes.io/component: migration
+    app.kubernetes.io/part-of: auction-system
+  annotations:
+    # ArgoCD sync wave: migrations run before app deployment
+    argocd.argoproj.io/sync-wave: "-1"
+    # Helm hook: run before install/upgrade
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  # Job must complete within 300s (Requirement 7.1)
+  activeDeadlineSeconds: 300
+  backoffLimit: 0  # No retries — failure triggers rollback
+  ttlSecondsAfterFinished: 3600  # Cleanup after 1 hour
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ${SERVICE_NAME}-migrate
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: Never
+      serviceAccountName: ${SERVICE_NAME}-migrate
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: migrate
+          image: ${REGISTRY}/${SERVICE_NAME}:${IMAGE_TAG}
+          command: ["./migrate"]
+          args: ["up"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ${SERVICE_NAME}-db-credentials
+                  key: url
+            - name: MIGRATION_TIMEOUT
+              value: "300"
+            - name: ROLLBACK_TIMEOUT
+              value: "120"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+---
+# ServiceAccount for migration jobs
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ${SERVICE_NAME}-migrate
+  namespace: auction-system
+  labels:
+    app.kubernetes.io/name: ${SERVICE_NAME}-migrate
+    app.kubernetes.io/component: migration
+---
+# Rollback Job — deployed on migration failure (Requirement 7.5)
+# Execute rollback within 120s and report failure
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${SERVICE_NAME}-rollback-${IMAGE_TAG}
+  namespace: auction-system
+  labels:
+    app.kubernetes.io/name: ${SERVICE_NAME}-rollback
+    app.kubernetes.io/component: migration
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+    helm.sh/hook: pre-install,pre-upgrade
+    helm.sh/hook-weight: "-4"
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  # Rollback must complete within 120s (Requirement 7.5)
+  activeDeadlineSeconds: 120
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ${SERVICE_NAME}-rollback
+        app.kubernetes.io/component: migration
+    spec:
+      restartPolicy: Never
+      serviceAccountName: ${SERVICE_NAME}-migrate
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: rollback
+          image: ${REGISTRY}/${SERVICE_NAME}:${IMAGE_TAG}
+          command: ["./migrate"]
+          args: ["down", "1"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ${SERVICE_NAME}-db-credentials
+                  key: url
+            - name: MIGRATION_TIMEOUT
+              value: "300"
+            - name: ROLLBACK_TIMEOUT
+              value: "120"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL

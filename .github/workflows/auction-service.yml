@@ -19,6 +19,6 @@ jobs:
       service-path:     services/auction-service
       dockerfile:       deployments/docker/auction.Dockerfile
       go-version:       "1.22"
-      coverage-threshold: "60"
+      coverage-threshold: "80"
     secrets:
       REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,3 +1,7 @@
+# DEVELOPMENT/LEGACY Kafka configuration
+# For production HA, use the enhanced configuration in ../data/kafka-ha.yaml
+# Production setup: 3 brokers + 3 ZK nodes across AZs, replication factor 3, min.insync.replicas 2
+#
 # Zookeeper StatefulSet
 apiVersion: apps/v1
 kind: StatefulSet

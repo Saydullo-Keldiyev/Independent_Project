@@ -1,0 +1,557 @@
+openapi: 3.0.3
+info:
+  title: Auction Service API
+  description: |
+    Manages auction lifecycle: creation, scheduling, state transitions, and settlement.
+
+    ## API Versioning
+    - Current versions: v1
+    - Version prefix: /api/v1
+    - Backward compatibility guaranteed within major version for 6 months minimum
+    - Deprecated versions include `Deprecation` header with sunset date (RFC 7231)
+    - After sunset date, endpoints return HTTP 410
+
+    ## Deprecation Policy
+    - Deprecated endpoints are announced 90+ days before removal
+    - CHANGELOG.md documents all additions, deprecations, and breaking changes
+  version: 1.0.0
+  contact:
+    name: Platform Team
+    email: platform@auction.com
+
+servers:
+  - url: http://localhost:8082
+    description: Local Development (Direct)
+  - url: http://localhost:8080
+    description: Local Development (via API Gateway)
+  - url: https://api.auction.com
+    description: Production
+
+tags:
+  - name: Auctions
+    description: Auction CRUD and lifecycle
+  - name: Images
+    description: Auction image management
+  - name: Categories
+    description: Auction categories
+  - name: Watchlist
+    description: User watchlist management
+  - name: Health
+    description: Service health endpoints
+
+paths:
+  /api/v1/auctions:
+    get:
+      tags: [Auctions]
+      operationId: listAuctions
+      summary: List auctions with filtering
+      parameters:
+        - name: state
+          in: query
+          schema:
+            type: string
+            enum: [active, scheduled, ended, draft]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - name: category_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Paginated auction list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuctionListResponse'
+    post:
+      tags: [Auctions]
+      operationId: createAuction
+      summary: Create auction (seller/admin only)
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAuctionRequest'
+      responses:
+        '201':
+          description: Auction created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuctionResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: Only sellers can create auctions
+        '413':
+          description: Request payload too large (>1MB)
+
+  /api/v1/auctions/{id}:
+    get:
+      tags: [Auctions]
+      operationId: getAuction
+      summary: Get auction by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Auction details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuctionResponse'
+        '400':
+          description: Invalid UUID format
+        '404':
+          description: Auction not found
+    put:
+      tags: [Auctions]
+      operationId: updateAuction
+      summary: Update auction (owner only, draft/scheduled state)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateAuctionRequest'
+      responses:
+        '200':
+          description: Auction updated
+        '400':
+          description: Validation error
+        '403':
+          description: Not the owner
+        '409':
+          description: Cannot modify active/ended auction
+    delete:
+      tags: [Auctions]
+      operationId: deleteAuction
+      summary: Delete auction (owner/admin)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Auction deleted
+        '403':
+          description: Not authorized
+        '404':
+          description: Auction not found
+
+  /api/v1/auctions/{id}/publish:
+    post:
+      tags: [Auctions]
+      operationId: publishAuction
+      summary: Publish auction (transition from draft to scheduled)
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Auction published
+        '403':
+          description: Not the owner
+        '409':
+          description: Invalid state transition
+
+  /api/v1/auctions/{id}/cancel:
+    post:
+      tags: [Auctions]
+      operationId: cancelAuction
+      summary: Cancel auction
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Auction cancelled
+        '403':
+          description: Not authorized
+        '409':
+          description: Cannot cancel ended auction
+
+  /api/v1/auctions/{id}/images:
+    post:
+      tags: [Images]
+      operationId: addAuctionImage
+      summary: Add image to auction
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                image:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: Image added
+        '403':
+          description: Not the owner
+        '413':
+          description: Image too large
+
+  /api/v1/auctions/{id}/images/{imageId}:
+    delete:
+      tags: [Images]
+      operationId: deleteAuctionImage
+      summary: Delete auction image
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: imageId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Image deleted
+        '403':
+          description: Not the owner
+        '404':
+          description: Image not found
+
+  /api/v1/seller/auctions:
+    get:
+      tags: [Auctions]
+      operationId: getSellerAuctions
+      summary: Get current seller's auctions
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: state
+          in: query
+          schema:
+            type: string
+            enum: [draft, scheduled, active, ended]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Seller's auctions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuctionListResponse'
+
+  /api/v1/categories:
+    get:
+      tags: [Categories]
+      operationId: listCategories
+      summary: List auction categories
+      responses:
+        '200':
+          description: Category list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  categories:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CategoryResponse'
+
+  /api/v1/watchlist:
+    get:
+      tags: [Watchlist]
+      operationId: getWatchlist
+      summary: Get user's watchlist
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Watchlist items
+
+  /api/v1/watchlist/{auctionId}:
+    post:
+      tags: [Watchlist]
+      operationId: addToWatchlist
+      summary: Add auction to watchlist
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: auctionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '201':
+          description: Added to watchlist
+        '404':
+          description: Auction not found
+    delete:
+      tags: [Watchlist]
+      operationId: removeFromWatchlist
+      summary: Remove auction from watchlist
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: auctionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Removed from watchlist
+
+  /health:
+    get:
+      tags: [Health]
+      operationId: healthCheck
+      summary: Liveness probe
+      responses:
+        '200':
+          description: Service is alive
+
+  /ready:
+    get:
+      tags: [Health]
+      operationId: readinessCheck
+      summary: Readiness probe
+      responses:
+        '200':
+          description: Service is ready
+        '503':
+          description: Dependencies unhealthy
+
+  /metrics:
+    get:
+      tags: [Health]
+      operationId: getMetrics
+      summary: Prometheus metrics endpoint
+      responses:
+        '200':
+          description: Prometheus text format metrics
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    CreateAuctionRequest:
+      type: object
+      required: [title, description, starting_price, start_time, end_time]
+      properties:
+        title:
+          type: string
+          minLength: 3
+          maxLength: 200
+        description:
+          type: string
+          minLength: 10
+          maxLength: 1000
+        category_id:
+          type: string
+          format: uuid
+        starting_price:
+          type: number
+          format: double
+          minimum: 0.01
+          maximum: 999999999.99
+        reserve_price:
+          type: number
+          format: double
+          minimum: 0.01
+          maximum: 999999999.99
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+
+    UpdateAuctionRequest:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 3
+          maxLength: 200
+        description:
+          type: string
+          minLength: 10
+          maxLength: 1000
+        reserve_price:
+          type: number
+          format: double
+          minimum: 0.01
+
+    AuctionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        seller_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        starting_price:
+          type: number
+        current_price:
+          type: number
+        state:
+          type: string
+          enum: [draft, scheduled, active, ending, ended, archived]
+        start_time:
+          type: string
+          format: date-time
+        end_time:
+          type: string
+          format: date-time
+        winner_id:
+          type: string
+          format: uuid
+          nullable: true
+        total_bids:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    AuctionListResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            auctions:
+              type: array
+              items:
+                $ref: '#/components/schemas/AuctionResponse'
+            total:
+              type: integer
+            page:
+              type: integer
+            page_size:
+              type: integer
+
+    CategoryResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  message:
+                    type: string
+        correlation_id:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time

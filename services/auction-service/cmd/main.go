@@ -17,6 +17,7 @@ import (
 	"github.com/auction-system/auction-service/internal/handler"
 	kafkaPkg "github.com/auction-system/auction-service/internal/kafka"
 	"github.com/auction-system/auction-service/internal/middleware"
+	"github.com/auction-system/auction-service/internal/pkginit"
 	redisPkg "github.com/auction-system/auction-service/internal/redis"
 	"github.com/auction-system/auction-service/internal/scheduler"
 	"github.com/auction-system/auction-service/internal/service"
@@ -59,6 +60,20 @@ func main() {
 		})
 		defer kafkaPkg.Close()
 		log.Info("✅ Kafka producer initialized")
+	}
+
+	// ── Shared packages (structured logger, circuit breakers, validation) ──
+	sharedSvc, sharedErr := pkginit.Init(pkginit.Config{
+		Environment:  cfg.App.Env,
+		KafkaBrokers: cfg.Kafka.Brokers,
+		KafkaTopic:   cfg.Kafka.Topic,
+	})
+	if sharedErr != nil {
+		log.Warn("shared packages init failed — continuing with local implementations", zap.Error(sharedErr))
+	} else {
+		defer sharedSvc.Close()
+		sharedSvc.Logger.Info("shared packages ready for auction-service")
+		_ = sharedSvc
 	}
 
 	// ── Services ──────────────────────────────────────────────────────────

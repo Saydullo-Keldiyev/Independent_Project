@@ -1,69 +1,171 @@
+# PostgreSQL Automated Backup CronJob
+# Requirements: 7.3, 7.7
+#
+# - Backup every 6 hours via pg_dump with custom format (supports parallel restore)
+# - activeDeadlineSeconds = 3600 (60 min timeout)
+# - On timeout/failure: alert DBA + retry once within 15 min (handled by backoffLimit + alerting)
+# - WAL archiving enabled via PostgreSQL configuration (see wal-archiving-config.yaml)
+---
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: postgres-backup
   namespace: auction-system
+  labels:
+    app: postgres-backup
+    component: database
+    tier: infrastructure
 spec:
-  schedule: "0 2 * * *"  # Daily at 02:00 UTC
+  # Every 6 hours: 00:00, 06:00, 12:00, 18:00 UTC
+  schedule: "0 */6 * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 7
-  failedJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  startingDeadlineSeconds: 900
   jobTemplate:
+    metadata:
+      labels:
+        app: postgres-backup
+        component: database
     spec:
+      # Requirement 7.7: 60-minute timeout for backup job
       activeDeadlineSeconds: 3600
-      backoffLimit: 2
+      # Retry once on failure (within ~15 min due to backoff)
+      backoffLimit: 1
       template:
+        metadata:
+          labels:
+            app: postgres-backup
+            component: database
         spec:
           restartPolicy: OnFailure
+          serviceAccountName: backup-service-account
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            fsGroup: 10001
           containers:
             - name: backup
-              image: postgres:16-alpine
+              image: postgres:16-alpine@sha256:d898b0b78a2627cb4ee63464a14571900d4e0f43d490f4e05a93b9a513ab1bce
               command:
                 - /bin/sh
                 - -c
                 - |
                   set -e
+
+                  # Configuration
                   TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-                  BACKUP_FILE="/backups/auction_db_${TIMESTAMP}.sql.gz"
+                  BACKUP_DIR="/backups/full"
+                  BACKUP_FILE="${BACKUP_DIR}/auction_db_${TIMESTAMP}.dump"
+                  METADATA_FILE="${BACKUP_DIR}/auction_db_${TIMESTAMP}.meta.json"
 
-                  echo "Starting backup at ${TIMESTAMP}..."
-                  pg_dump "$DB_URL" | gzip > "$BACKUP_FILE"
+                  echo "[$(date -Iseconds)] Starting PostgreSQL backup..."
+                  echo "[$(date -Iseconds)] Target: ${BACKUP_FILE}"
 
-                  # Keep only last 14 days of backups
-                  find /backups -name "*.sql.gz" -mtime +14 -delete
+                  # Ensure backup directory exists
+                  mkdir -p "${BACKUP_DIR}"
 
-                  SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
-                  echo "✅ Backup complete: ${BACKUP_FILE} (${SIZE})"
+                  # Execute pg_dump with custom format (supports parallel restore + compression)
+                  START_TIME=$(date +%s)
+                  pg_dump \
+                    --dbname="$DB_URL" \
+                    --format=custom \
+                    --compress=6 \
+                    --verbose \
+                    --no-password \
+                    --file="$BACKUP_FILE" \
+                    2>&1 | tee /tmp/backup.log
+
+                  END_TIME=$(date +%s)
+                  DURATION=$((END_TIME - START_TIME))
+
+                  # Verify backup file exists and has content
+                  if [ ! -f "$BACKUP_FILE" ] || [ ! -s "$BACKUP_FILE" ]; then
+                    echo "[$(date -Iseconds)] ERROR: Backup file is missing or empty!"
+                    exit 1
+                  fi
+
+                  # Get backup size
+                  BACKUP_SIZE=$(du -b "$BACKUP_FILE" | cut -f1)
+                  BACKUP_SIZE_HUMAN=$(du -h "$BACKUP_FILE" | cut -f1)
+
+                  # Collect table metadata for restore verification
+                  echo "[$(date -Iseconds)] Collecting table metadata for verification..."
+                  psql "$DB_URL" --no-password -t -A -F',' -c "
+                    SELECT schemaname || '.' || relname AS table_name,
+                           n_live_tup AS row_count
+                    FROM pg_stat_user_tables
+                    ORDER BY schemaname, relname;
+                  " > /tmp/table_counts.csv
+
+                  # Generate metadata JSON for restore verification
+                  cat > "$METADATA_FILE" << EOF
+                  {
+                    "backup_file": "$(basename $BACKUP_FILE)",
+                    "timestamp": "$(date -Iseconds)",
+                    "duration_seconds": ${DURATION},
+                    "size_bytes": ${BACKUP_SIZE},
+                    "size_human": "${BACKUP_SIZE_HUMAN}",
+                    "database": "auction_db",
+                    "tables": [
+                  $(awk -F',' '{printf "    {\"name\": \"%s\", \"row_count\": %s}", $1, $2}' /tmp/table_counts.csv | paste -sd ',' -)
+                    ],
+                    "pg_version": "$(pg_dump --version | head -1)"
+                  }
+                  EOF
+
+                  echo "[$(date -Iseconds)] ✅ Backup complete!"
+                  echo "[$(date -Iseconds)]   File: ${BACKUP_FILE}"
+                  echo "[$(date -Iseconds)]   Size: ${BACKUP_SIZE_HUMAN}"
+                  echo "[$(date -Iseconds)]   Duration: ${DURATION}s"
+                  echo "[$(date -Iseconds)]   Tables: $(wc -l < /tmp/table_counts.csv)"
               env:
                 - name: DB_URL
                   valueFrom:
                     secretKeyRef:
                       name: auction-system-secrets
                       key: DB_URL
+                - name: PGCONNECT_TIMEOUT
+                  value: "30"
               volumeMounts:
                 - name: backup-storage
                   mountPath: /backups
               resources:
                 requests:
-                  cpu: "100m"
-                  memory: "256Mi"
-                limits:
-                  cpu: "500m"
+                  cpu: "200m"
                   memory: "512Mi"
+                limits:
+                  cpu: "1000m"
+                  memory: "1Gi"
           volumes:
             - name: backup-storage
               persistentVolumeClaim:
                 claimName: postgres-backup-pvc
 ---
+# PersistentVolumeClaim for backup storage
+# Sized to hold 90 days of backups (6-hourly = 360 backups)
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: postgres-backup-pvc
   namespace: auction-system
+  labels:
+    app: postgres-backup
+    component: database
 spec:
   accessModes:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 50Gi
+      storage: 200Gi
   storageClassName: standard
+---
+# ServiceAccount for backup jobs
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: backup-service-account
+  namespace: auction-system
+  labels:
+    app: postgres-backup
+    component: database

@@ -1,11 +1,44 @@
 openapi: 3.0.3
 info:
-  title: Auction System API
+  title: Auction System API Gateway
   version: 1.0.0
-  description: Production-grade auction platform — all endpoints
+  description: |
+    Production-grade auction platform API Gateway. Routes requests to backend microservices.
+
+    ## API Versioning
+    - Current supported versions: v1
+    - Version prefix: /api/v1, /api/v2 (when available)
+    - Maximum 3 concurrent active versions
+    - Backward compatibility guaranteed within major version for 6 months minimum
+
+    ## Deprecation Policy
+    - Deprecated versions include `Deprecation` response header with sunset date (RFC 7231 format)
+    - Deprecated versions are announced 90+ days before removal
+    - After sunset date, requests return HTTP 410 with list of current versions
+    - Unrecognized version prefixes return HTTP 404 with list of supported versions
+
+    ## Rate Limiting
+    - Authenticated users: 200 req/min (global)
+    - Anonymous users: 30 req/min (global)
+    - Endpoint-specific: login (5/min), register (3/min), bids (30/min)
+    - Most restrictive limit applies when global and endpoint-specific overlap
+    - HTTP 429 response includes Retry-After header
+    - IP blocking: 15 minutes after 10 rate limit violations within 1 hour
+
+    ## CHANGELOG
+    - See CHANGELOG.md in this service for additions, deprecations, and breaking changes
+  contact:
+    name: Platform Team
+    email: platform@auction.com
+  license:
+    name: Internal
+    url: https://docs.auction-system/license
+
 servers:
   - url: http://localhost:8080
-    description: Local (API Gateway)
+    description: Local Development (API Gateway)
+  - url: https://api.auction.com
+    description: Production
 tags:
   - name: Auth
   - name: Sessions
@@ -137,3 +170,114 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: JWT access token with 24h key rotation and 15min grace period
+
+  headers:
+    Deprecation:
+      description: RFC 7231 date indicating when this API version will be removed
+      schema:
+        type: string
+        example: "Sat, 01 Mar 2025 00:00:00 GMT"
+    Retry-After:
+      description: Seconds until rate limit resets
+      schema:
+        type: integer
+        example: 60
+    X-Correlation-ID:
+      description: Correlation ID for request tracing (generated if not provided)
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    VersionNotFound:
+      description: API version not recognized
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              error:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    example: VERSION_NOT_FOUND
+                  message:
+                    type: string
+                    example: "API version not found"
+                  supported_versions:
+                    type: array
+                    items:
+                      type: string
+                    example: ["v1"]
+    VersionGone:
+      description: API version has been sunset
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              error:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    example: VERSION_GONE
+                  message:
+                    type: string
+                    example: "API version has been removed"
+                  current_versions:
+                    type: array
+                    items:
+                      type: string
+                    example: ["v1"]
+    RateLimited:
+      description: Rate limit exceeded
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/Retry-After'
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              error:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    example: RATE_LIMIT_EXCEEDED
+                  message:
+                    type: string
+    IPBlocked:
+      description: IP address blocked due to repeated violations
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              error:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    example: IP_BLOCKED
+                  message:
+                    type: string
+                  reason:
+                    type: string
+                  remaining_seconds:
+                    type: integer

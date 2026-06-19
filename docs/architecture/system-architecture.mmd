@@ -1,0 +1,132 @@
+%% Auction System Architecture Diagram
+%% Format: Mermaid (version-controlled, renders in GitHub/GitLab)
+%% Last Updated: 2024-01-15
+
+graph TB
+    subgraph "External Clients"
+        WebClient[Web Browser]
+        MobileClient[Mobile App]
+        APIClient[API Consumers]
+    end
+
+    subgraph "Edge Layer"
+        LB[Cloud Load Balancer]
+        IG[Istio Ingress Gateway<br/>mTLS termination]
+    end
+
+    subgraph "Application Layer"
+        subgraph "API Gateway (Gin)"
+            GW[API Gateway]
+            RL[Rate Limiter<br/>Sliding Window]
+            VR[Version Router<br/>v1/v2]
+            CB[Circuit Breakers]
+            CID[Correlation ID<br/>Middleware]
+            MP[Memory Pressure<br/>Protection]
+        end
+
+        subgraph "Core Services"
+            BS[Bid Service<br/>Port 8081]
+            AS[Auction Service<br/>Port 8083]
+            US[User Service<br/>Port 8082]
+            PS[Payment Service<br/>Port 8085]
+            NS[Notification Service<br/>Port 8084]
+            SS[Search Service<br/>Port 8086]
+        end
+
+        subgraph "Shared Libraries (pkg/)"
+            LOCK[pkg/lock<br/>Distributed Lock<br/>+ Fencing Tokens]
+            CBR[pkg/circuitbreaker<br/>State Machine]
+            LOG[pkg/logger<br/>Structured + Dedup]
+            KFK[pkg/kafka<br/>Idempotent Consumer]
+            RLM[pkg/ratelimit<br/>Sliding Window]
+            VAL[pkg/validation<br/>Input Sanitization]
+        end
+    end
+
+    subgraph "Data Layer"
+        subgraph "PostgreSQL HA"
+            PG_P[(PostgreSQL Primary<br/>AZ-1)]
+            PG_R[(PostgreSQL Replica<br/>AZ-2)]
+        end
+
+        subgraph "Redis Cluster"
+            R1[(Redis Master 1<br/>AZ-1)]
+            R2[(Redis Master 2<br/>AZ-2)]
+            R3[(Redis Master 3<br/>AZ-3)]
+        end
+
+        subgraph "Kafka Cluster"
+            K1[Kafka Broker 1<br/>AZ-1]
+            K2[Kafka Broker 2<br/>AZ-2]
+            K3[Kafka Broker 3<br/>AZ-3]
+        end
+    end
+
+    subgraph "Platform Services"
+        Vault[HashiCorp Vault<br/>Secrets Management]
+        Prom[Prometheus<br/>Metrics Collection]
+        Graf[Grafana<br/>Dashboards]
+        Alert[Alertmanager<br/>Slack + PagerDuty]
+        Loki[Loki<br/>Log Aggregation]
+        OTEL[OpenTelemetry<br/>Distributed Tracing]
+    end
+
+    %% Client connections
+    WebClient --> LB
+    MobileClient --> LB
+    APIClient --> LB
+    LB --> IG
+
+    %% Ingress to Gateway
+    IG --> GW
+
+    %% Gateway internal flow
+    GW --> RL --> VR --> CID --> CB --> MP
+
+    %% Gateway to services (all via mTLS + service tokens)
+    GW --> BS
+    GW --> AS
+    GW --> US
+    GW --> PS
+    GW --> NS
+    GW --> SS
+
+    %% Inter-service communication
+    BS --> AS
+    BS --> PS
+    AS --> NS
+
+    %% Data layer connections
+    BS --> PG_P
+    BS --> R1
+    BS --> K1
+    AS --> PG_P
+    AS --> K1
+    US --> PG_P
+    US --> R1
+    PS --> PG_P
+    PS --> K1
+    NS --> K1
+    SS --> PG_P
+
+    %% PostgreSQL replication
+    PG_P -.->|sync replication| PG_R
+
+    %% Redis cluster mesh
+    R1 -.- R2
+    R2 -.- R3
+    R3 -.- R1
+
+    %% Kafka cluster replication
+    K1 -.- K2
+    K2 -.- K3
+    K3 -.- K1
+
+    %% Platform integrations
+    BS & AS & US & PS & NS & SS --> Prom
+    BS & AS & US & PS & NS & SS --> Loki
+    BS & AS & US & PS & NS & SS --> OTEL
+    BS & AS & US & PS & NS & SS --> Vault
+    GW --> Prom
+    Prom --> Graf
+    Prom --> Alert

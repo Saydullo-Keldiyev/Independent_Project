@@ -1,0 +1,150 @@
+# PostgreSQL Backup Alerting Rules
+# Requirement 7.7:
+#   Alert DBA on backup timeout (>60 min), retry once within 15 min.
+#   These rules integrate with the existing Alertmanager configuration.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backup-alerting-rules
+  namespace: monitoring
+  labels:
+    app: prometheus
+    component: alerting
+    tier: infrastructure
+data:
+  backup-alerts.yml: |
+    groups:
+      - name: postgres-backup-alerts
+        rules:
+          # ────────────────────────────────────────────────────────────
+          # Alert: Backup job failed or timed out
+          # Requirement 7.7: Alert DBA on backup timeout (>60 min)
+          # ────────────────────────────────────────────────────────────
+          - alert: PostgresBackupFailed
+            expr: |
+              kube_job_status_failed{job_name=~"postgres-backup-.*", namespace="auction-system"} > 0
+            for: 1m
+            labels:
+              severity: critical
+              service: postgresql
+              team: dba
+            annotations:
+              summary: "PostgreSQL backup job failed"
+              description: |
+                The PostgreSQL backup job {{ $labels.job_name }} has failed in namespace {{ $labels.namespace }}.
+                This may be due to a timeout (>60 min) or a database connectivity issue.
+                The job will be retried automatically once. If the retry also fails, manual intervention is required.
+              threshold: "Job completion within 60 minutes"
+              current_value: "Job failed"
+              runbook_url: "https://docs.auction-system/runbooks/backup-failure"
+
+          # ────────────────────────────────────────────────────────────
+          # Alert: No successful backup in the last 12 hours
+          # (Backup runs every 6 hours; missing 2 consecutive = problem)
+          # ────────────────────────────────────────────────────────────
+          - alert: PostgresBackupMissing
+            expr: |
+              time() - max(kube_job_status_completion_time{job_name=~"postgres-backup-.*", namespace="auction-system"}) > 43200
+            for: 5m
+            labels:
+              severity: critical
+              service: postgresql
+              team: dba
+            annotations:
+              summary: "No successful PostgreSQL backup in 12+ hours"
+              description: |
+                No PostgreSQL backup has completed successfully in the last 12 hours.
+                Backups are scheduled every 6 hours. Missing 2 consecutive backups indicates a systemic issue.
+                Check CronJob status, PVC capacity, and database connectivity.
+              threshold: "Backup every 6 hours"
+              current_value: "{{ $value | humanizeDuration }} since last backup"
+              runbook_url: "https://docs.auction-system/runbooks/backup-missing"
+
+          # ────────────────────────────────────────────────────────────
+          # Alert: Backup job running too long (approaching timeout)
+          # ────────────────────────────────────────────────────────────
+          - alert: PostgresBackupSlow
+            expr: |
+              time() - kube_job_status_start_time{job_name=~"postgres-backup-.*", namespace="auction-system"} > 2700
+              and kube_job_status_active{job_name=~"postgres-backup-.*", namespace="auction-system"} > 0
+            for: 1m
+            labels:
+              severity: warning
+              service: postgresql
+              team: dba
+            annotations:
+              summary: "PostgreSQL backup running longer than 45 minutes"
+              description: |
+                The PostgreSQL backup job {{ $labels.job_name }} has been running for more than 45 minutes.
+                The timeout is set to 60 minutes. If it does not complete soon, it will be terminated and retried.
+              threshold: "45 minutes (timeout at 60 min)"
+              current_value: "{{ $value | humanizeDuration }} elapsed"
+              runbook_url: "https://docs.auction-system/runbooks/backup-slow"
+
+          # ────────────────────────────────────────────────────────────
+          # Alert: Restore verification failed
+          # ────────────────────────────────────────────────────────────
+          - alert: PostgresRestoreVerificationFailed
+            expr: |
+              kube_job_status_failed{job_name=~"postgres-restore-verification-.*", namespace="auction-system"} > 0
+            for: 1m
+            labels:
+              severity: critical
+              service: postgresql
+              team: dba
+            annotations:
+              summary: "PostgreSQL restore verification failed"
+              description: |
+                The weekly PostgreSQL restore verification job has failed.
+                This means backups may not be restorable. Possible causes:
+                - Corrupted backup file
+                - Table/row count variance exceeds 1%
+                - Restore database connectivity issues
+                Immediate investigation required.
+              threshold: "Row count variance within 1%"
+              current_value: "Verification failed"
+              runbook_url: "https://docs.auction-system/runbooks/restore-verification-failure"
+
+          # ────────────────────────────────────────────────────────────
+          # Alert: Backup storage running low
+          # ────────────────────────────────────────────────────────────
+          - alert: PostgresBackupStorageLow
+            expr: |
+              kubelet_volume_stats_available_bytes{persistentvolumeclaim="postgres-backup-pvc", namespace="auction-system"}
+              / kubelet_volume_stats_capacity_bytes{persistentvolumeclaim="postgres-backup-pvc", namespace="auction-system"}
+              < 0.15
+            for: 5m
+            labels:
+              severity: warning
+              service: postgresql
+              team: dba
+            annotations:
+              summary: "PostgreSQL backup storage below 15% available"
+              description: |
+                The backup PVC (postgres-backup-pvc) has less than 15% storage available.
+                Current usage may cause upcoming backups to fail.
+                Consider increasing PVC size or reducing retention period.
+              threshold: "15% free space"
+              current_value: "{{ $value | humanizePercentage }} available"
+              runbook_url: "https://docs.auction-system/runbooks/backup-storage-low"
+
+          # ────────────────────────────────────────────────────────────
+          # Alert: Retention cleanup not running
+          # ────────────────────────────────────────────────────────────
+          - alert: PostgresRetentionCleanupMissing
+            expr: |
+              time() - max(kube_job_status_completion_time{job_name=~"postgres-backup-retention-cleanup-.*", namespace="auction-system"}) > 172800
+            for: 5m
+            labels:
+              severity: warning
+              service: postgresql
+              team: dba
+            annotations:
+              summary: "Backup retention cleanup hasn't run in 48+ hours"
+              description: |
+                The backup retention cleanup CronJob has not completed successfully in over 48 hours.
+                Old backups may accumulate and exhaust storage.
+              threshold: "Daily cleanup execution"
+              current_value: "{{ $value | humanizeDuration }} since last run"
+              runbook_url: "https://docs.auction-system/runbooks/retention-cleanup-missing"

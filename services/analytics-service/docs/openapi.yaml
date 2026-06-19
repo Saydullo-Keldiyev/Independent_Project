@@ -1,0 +1,331 @@
+openapi: 3.0.3
+info:
+  title: Analytics Service API
+  description: |
+    Platform analytics, revenue metrics, seller dashboards, and trending leaderboards.
+    Consumes events from Kafka for real-time metrics aggregation.
+
+    ## API Versioning
+    - Current versions: v1
+    - Version prefix: /api/v1
+    - Backward compatibility guaranteed within major version for 6 months minimum
+    - Deprecated versions include `Deprecation` header with sunset date (RFC 7231)
+    - After sunset date, endpoints return HTTP 410
+
+    ## Deprecation Policy
+    - Deprecated endpoints are announced 90+ days before removal
+    - CHANGELOG.md documents all additions, deprecations, and breaking changes
+  version: 1.0.0
+  contact:
+    name: Platform Team
+    email: platform@auction.com
+
+servers:
+  - url: http://localhost:8087
+    description: Local Development (Direct)
+  - url: http://localhost:8080
+    description: Local Development (via API Gateway)
+  - url: https://api.auction.com
+    description: Production
+
+tags:
+  - name: Dashboard
+    description: Admin dashboard and KPIs
+  - name: Revenue
+    description: Revenue metrics and reporting
+  - name: Seller
+    description: Seller-specific analytics
+  - name: Trending
+    description: Leaderboards and trending data
+  - name: Health
+    description: Service health endpoints
+
+paths:
+  /api/v1/analytics/admin/dashboard:
+    get:
+      tags: [Dashboard]
+      operationId: getAdminDashboard
+      summary: Get platform-wide KPIs
+      description: Returns key performance indicators for platform administrators.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Dashboard statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardResponse'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Admin role required
+
+  /api/v1/analytics/revenue:
+    get:
+      tags: [Revenue]
+      operationId: getRevenueMetrics
+      summary: Get revenue metrics for date range
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          description: Start date (defaults to 30 days ago)
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          description: End date (defaults to today)
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Revenue metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevenueResponse'
+        '401':
+          description: Unauthorized
+        '403':
+          description: Admin role required
+
+  /api/v1/analytics/seller/{id}:
+    get:
+      tags: [Seller]
+      operationId: getSellerAnalytics
+      summary: Get seller-specific analytics
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Seller statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SellerStatsResponse'
+        '400':
+          description: Invalid UUID format
+        '404':
+          description: Seller not found
+
+  /api/v1/analytics/trending:
+    get:
+      tags: [Trending]
+      operationId: getTrendingLeaderboards
+      summary: Get leaderboards and trending data
+      description: Returns top sellers, bidders, and categories.
+      responses:
+        '200':
+          description: Trending leaderboards
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrendingResponse'
+
+  /api/v1/analytics/auctions/{id}:
+    get:
+      tags: [Dashboard]
+      operationId: getAuctionAnalytics
+      summary: Get analytics for a specific auction
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Auction metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuctionMetricsResponse'
+        '400':
+          description: Invalid UUID format
+        '404':
+          description: Auction metrics not found
+
+  /health:
+    get:
+      tags: [Health]
+      operationId: healthCheck
+      summary: Liveness probe
+      responses:
+        '200':
+          description: Service is alive
+
+  /ready:
+    get:
+      tags: [Health]
+      operationId: readinessCheck
+      summary: Readiness probe
+      responses:
+        '200':
+          description: Service is ready
+        '503':
+          description: Dependencies unhealthy
+
+  /metrics:
+    get:
+      tags: [Health]
+      operationId: getMetrics
+      summary: Prometheus metrics endpoint
+      responses:
+        '200':
+          description: Prometheus text format metrics
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    DashboardResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            total_revenue:
+              type: number
+              format: double
+            today_revenue:
+              type: number
+              format: double
+            today_bids:
+              type: integer
+            concurrent_users:
+              type: integer
+
+    RevenueResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                format: date
+              revenue:
+                type: number
+                format: double
+              transactions:
+                type: integer
+              new_users:
+                type: integer
+
+    SellerStatsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            seller_id:
+              type: string
+              format: uuid
+            total_auctions:
+              type: integer
+            active_auctions:
+              type: integer
+            total_revenue:
+              type: number
+              format: double
+            total_bids_received:
+              type: integer
+            avg_bids_per_auction:
+              type: number
+              format: double
+
+    TrendingResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            top_sellers:
+              type: array
+              items:
+                $ref: '#/components/schemas/LeaderboardEntry'
+            top_bidders:
+              type: array
+              items:
+                $ref: '#/components/schemas/LeaderboardEntry'
+            top_categories:
+              type: array
+              items:
+                $ref: '#/components/schemas/LeaderboardEntry'
+
+    LeaderboardEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        score:
+          type: number
+          format: double
+
+    AuctionMetricsResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        data:
+          type: object
+          properties:
+            auction_id:
+              type: string
+              format: uuid
+            total_bids:
+              type: integer
+            unique_bidders:
+              type: integer
+            price_increase_pct:
+              type: number
+              format: double
+            avg_bid_interval_seconds:
+              type: number
+              format: double
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+        correlation_id:
+          type: string
+          format: uuid
+        timestamp:
+          type: string
+          format: date-time

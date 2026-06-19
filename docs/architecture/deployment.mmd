@@ -1,0 +1,51 @@
+%% Auction System Deployment Architecture
+%% Format: Mermaid (version-controlled)
+%% Last Updated: 2024-01-15
+
+graph LR
+    subgraph "Availability Zone 1"
+        subgraph "Pods AZ-1"
+            GW1[API Gateway Pod 1]
+            BS1[Bid Service Pod 1]
+            AS1[Auction Service Pod 1]
+            US1[User Service Pod 1]
+            PS1[Payment Service Pod 1]
+            NS1[Notification Service Pod 1]
+        end
+        subgraph "Data AZ-1"
+            PG1[(PostgreSQL Primary)]
+            R1[(Redis Master 1)]
+            K1[Kafka Broker 1]
+        end
+    end
+
+    subgraph "Availability Zone 2"
+        subgraph "Pods AZ-2"
+            GW2[API Gateway Pod 2]
+            BS2[Bid Service Pod 2]
+            AS2[Auction Service Pod 2]
+            US2[User Service Pod 2]
+            PS2[Payment Service Pod 2]
+            NS2[Notification Service Pod 2]
+        end
+        subgraph "Data AZ-2"
+            PG2[(PostgreSQL Sync Replica)]
+            R2[(Redis Master 2)]
+            K2[Kafka Broker 2]
+        end
+    end
+
+    subgraph "Availability Zone 3"
+        subgraph "Data AZ-3"
+            R3[(Redis Master 3)]
+            K3[Kafka Broker 3]
+        end
+    end
+
+    %% Replication
+    PG1 -->|synchronous replication| PG2
+    R1 --- R2 --- R3
+    K1 --- K2 --- K3
+
+    %% Pod properties (annotations)
+    note1[/"PDB: minAvailable=1 per service<br/>HPA: min 2 replicas<br/>Anti-affinity: max 50% per zone<br/>preStop: sleep 5s"/]

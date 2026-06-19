@@ -1,5 +1,6 @@
-# Redis StatefulSet — persistent storage, stable network identity
-# For production HA, use Redis Sentinel or Redis Cluster (or Bitnami Helm chart)
+# Redis StatefulSet — persistent storage, stable network identity (DEVELOPMENT ONLY)
+# For production HA, use Redis Cluster configuration in ../data/redis-cluster.yaml
+# Production setup: 6 nodes (3 masters + 3 replicas) across 3 AZs with automatic failover
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:

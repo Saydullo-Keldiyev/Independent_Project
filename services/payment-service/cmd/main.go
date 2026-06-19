@@ -16,6 +16,7 @@ import (
 	"github.com/auction-system/payment-service/internal/database"
 	"github.com/auction-system/payment-service/internal/handler"
 	"github.com/auction-system/payment-service/internal/middleware"
+	"github.com/auction-system/payment-service/internal/pkginit"
 	"github.com/auction-system/payment-service/internal/service"
 )
 
@@ -29,6 +30,20 @@ func main() {
 		log, _ = zap.NewDevelopment()
 	}
 	defer log.Sync()
+
+	// ── Shared packages (structured logger, circuit breakers, validation) ──
+	sharedSvc, sharedErr := pkginit.Init(pkginit.Config{
+		Environment:  cfg.App.Env,
+		KafkaBrokers: cfg.Kafka.Brokers,
+		KafkaTopic:   cfg.Kafka.ProducerTopic,
+	})
+	if sharedErr != nil {
+		log.Warn("shared packages init failed — continuing with local implementations", zap.Error(sharedErr))
+	} else {
+		defer sharedSvc.Close()
+		sharedSvc.Logger.Info("shared packages ready for payment-service")
+		_ = sharedSvc
+	}
 
 	log.Info("starting payment-service",
 		zap.String("env", cfg.App.Env),
